@@ -185,7 +185,6 @@ function App() {
       request(`/analytics/${repoId}/prs`),
       request(`/analytics/${repoId}/issues`),
       request(`/analytics/${repoId}/contributors`),
-      request(`/ai/insights/${repoId}`),
     ])
 
     const dashboardResult = results[0]
@@ -212,7 +211,7 @@ function App() {
       prs: results[2].status === 'fulfilled' ? results[2].value : null,
       issues: results[3].status === 'fulfilled' ? results[3].value : null,
       contributors: results[4].status === 'fulfilled' ? results[4].value : null,
-      insights: results[5].status === 'fulfilled' ? results[5].value.insights : null,
+      insights: dashboardResult.value.insights || null,
     })
   }, [request, token])
 
