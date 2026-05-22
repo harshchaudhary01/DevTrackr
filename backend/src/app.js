@@ -13,6 +13,9 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const app = express();
 
+// Render/proxy deployments send X-Forwarded-* headers; trust the first proxy hop.
+app.set('trust proxy', 1);
+
 const defaultOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',

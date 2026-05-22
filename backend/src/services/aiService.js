@@ -1,4 +1,5 @@
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
+
 const {
   sprintSummaryPrompt,
   productivityInsightsPrompt,
@@ -9,14 +10,18 @@ const {
   inactiveContributorPrompt,
 } = require('../prompts/aiPrompts');
 
-// Initialize Gemini client
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialize Groq client
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
-const MODEL = 'gemini-2.0-flash';
+// Recommended Groq model
+const MODEL = 'llama-3.3-70b-versatile';
 
 class AIServiceError extends Error {
   constructor(message, options = {}) {
     super(message);
+
     this.name = 'AIServiceError';
     this.statusCode = options.statusCode || 500;
     this.code = options.code || 'AI_SERVICE_ERROR';
@@ -25,18 +30,31 @@ class AIServiceError extends Error {
 }
 
 const extractRetryAfterSeconds = (message) => {
-  const match = String(message || '').match(/retry in\s+(\d+(?:\.\d+)?)s/i);
+  const match = String(message || '').match(
+    /retry in\s+(\d+(?:\.\d+)?)s/i
+  );
+
   return match ? Math.ceil(Number(match[1])) : null;
 };
 
 const normalizeAIError = (error) => {
-  const message = String(error?.message || error || 'Unknown AI error');
-  const upper = message.toUpperCase();
-  const retryAfterSeconds = extractRetryAfterSeconds(message);
+  const message = String(
+    error?.message || error || 'Unknown AI error'
+  );
 
-  if (upper.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || /quota exceeded/i.test(message)) {
+  const upper = message.toUpperCase();
+
+  const retryAfterSeconds =
+    extractRetryAfterSeconds(message);
+
+  // Rate limit / quota
+  if (
+    upper.includes('RATE_LIMIT') ||
+    message.includes('429') ||
+    /quota exceeded/i.test(message)
+  ) {
     return new AIServiceError(
-      'Gemini API quota exceeded. Please try again later or update your API plan/billing.',
+      'Groq API quota exceeded. Please try again later.',
       {
         statusCode: 429,
         code: 'AI_QUOTA_EXCEEDED',
@@ -45,47 +63,82 @@ const normalizeAIError = (error) => {
     );
   }
 
-  return new AIServiceError(`AI generation failed: ${message}`, {
-    statusCode: 502,
-    code: 'AI_GENERATION_FAILED',
-    retryAfterSeconds,
-  });
+  // Authentication issues
+  if (
+    upper.includes('UNAUTHORIZED') ||
+    upper.includes('INVALID API KEY')
+  ) {
+    return new AIServiceError(
+      'Invalid Groq API key.',
+      {
+        statusCode: 401,
+        code: 'INVALID_API_KEY',
+      }
+    );
+  }
+
+  return new AIServiceError(
+    `AI generation failed: ${message}`,
+    {
+      statusCode: 502,
+      code: 'AI_GENERATION_FAILED',
+      retryAfterSeconds,
+    }
+  );
 };
 
 /**
- * Core Gemini text generation function
+ * Core text generation function
  * @param {string} prompt
- * @returns {string} response text
+ * @returns {string}
  */
 const generateText = async (prompt) => {
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: prompt,
-    });
-    return response.text;
+    const completion =
+      await groq.chat.completions.create({
+        model: MODEL,
+
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+
+        temperature: 0.3,
+
+        // Helps keep responses concise
+        max_tokens: 2000,
+      });
+
+    return completion.choices[0].message.content;
   } catch (error) {
-    console.error('Gemini API Error:', error.message);
+    console.error(
+      'Groq API Error:',
+      error.message
+    );
+
     throw normalizeAIError(error);
   }
 };
 
 /**
- * Safely parse JSON from Gemini response
- * Gemini sometimes wraps JSON in markdown code blocks
- * @param {string} text
- * @returns {any} parsed JSON
+ * Safely parse JSON from AI response
  */
 const safeParseJSON = (text) => {
   try {
-    // Strip markdown code fences if present
     const cleaned = text
       .replace(/```json\n?/gi, '')
       .replace(/```\n?/gi, '')
       .trim();
+
     return JSON.parse(cleaned);
   } catch {
-    console.error('JSON parse failed for AI response:', text);
+    console.error(
+      'JSON parse failed for AI response:',
+      text
+    );
+
     return null;
   }
 };
@@ -93,38 +146,49 @@ const safeParseJSON = (text) => {
 /**
  * Generate sprint summary
  */
-const generateSprintSummary = async (analyticsData) => {
-  const prompt = sprintSummaryPrompt(analyticsData);
-  const text = await generateText(prompt);
-  return text;
+const generateSprintSummary = async (
+  analyticsData
+) => {
+  const prompt =
+    sprintSummaryPrompt(analyticsData);
+
+  return await generateText(prompt);
 };
 
 /**
  * Generate productivity insights
  */
-const generateProductivityInsights = async (analyticsData) => {
-  const prompt = productivityInsightsPrompt(analyticsData);
-  const text = await generateText(prompt);
-  return text;
-};
+const generateProductivityInsights =
+  async (analyticsData) => {
+    const prompt =
+      productivityInsightsPrompt(
+        analyticsData
+      );
+
+    return await generateText(prompt);
+  };
 
 /**
  * Generate actionable recommendations
- * Returns array of recommendation objects
  */
-const generateRecommendations = async (analyticsData) => {
-  const prompt = recommendationsPrompt(analyticsData);
+const generateRecommendations = async (
+  analyticsData
+) => {
+  const prompt =
+    recommendationsPrompt(analyticsData);
+
   const text = await generateText(prompt);
+
   const parsed = safeParseJSON(text);
 
   if (!Array.isArray(parsed)) {
-    // Fallback if parsing fails
     return [
       {
         category: 'process',
         priority: 'medium',
         title: 'Review Development Process',
-        description: 'Consider reviewing and optimizing your current development workflow for better efficiency.',
+        description:
+          'Consider reviewing and optimizing your workflow.',
       },
     ];
   }
@@ -133,38 +197,56 @@ const generateRecommendations = async (analyticsData) => {
 };
 
 /**
- * Detect bottlenecks in development process
- * Returns array of bottleneck objects
+ * Detect bottlenecks
  */
-const detectBottlenecks = async (analyticsData) => {
-  const prompt = bottleneckDetectionPrompt(analyticsData);
+const detectBottlenecks = async (
+  analyticsData
+) => {
+  const prompt =
+    bottleneckDetectionPrompt(
+      analyticsData
+    );
+
   const text = await generateText(prompt);
+
   const parsed = safeParseJSON(text);
 
   if (!Array.isArray(parsed)) return [];
+
   return parsed;
 };
 
 /**
- * Generate project health analysis
+ * Project health analysis
  */
-const generateProjectHealthAnalysis = async (analyticsData) => {
-  const prompt = projectHealthPrompt(analyticsData);
-  const text = await generateText(prompt);
-  return text;
-};
+const generateProjectHealthAnalysis =
+  async (analyticsData) => {
+    const prompt =
+      projectHealthPrompt(
+        analyticsData
+      );
+
+    return await generateText(prompt);
+  };
 
 /**
- * Generate risk analysis
- * Returns object with overallRisk and risks array
+ * Risk analysis
  */
-const generateRiskAnalysis = async (analyticsData) => {
-  const prompt = riskAnalysisPrompt(analyticsData);
+const generateRiskAnalysis = async (
+  analyticsData
+) => {
+  const prompt =
+    riskAnalysisPrompt(analyticsData);
+
   const text = await generateText(prompt);
+
   const parsed = safeParseJSON(text);
 
   if (!parsed || !parsed.overallRisk) {
-    return { overallRisk: 'low', risks: [] };
+    return {
+      overallRisk: 'low',
+      risks: [],
+    };
   }
 
   return parsed;
@@ -173,16 +255,30 @@ const generateRiskAnalysis = async (analyticsData) => {
 /**
  * Analyze inactive contributors
  */
-const analyzeInactiveContributors = async (contributors) => {
-  if (!contributors || contributors.length === 0) return [];
+const analyzeInactiveContributors =
+  async (contributors) => {
+    if (
+      !contributors ||
+      contributors.length === 0
+    ) {
+      return [];
+    }
 
-  const prompt = inactiveContributorPrompt(contributors);
-  const text = await generateText(prompt);
-  const parsed = safeParseJSON(text);
+    const prompt =
+      inactiveContributorPrompt(
+        contributors
+      );
 
-  if (!Array.isArray(parsed)) return [];
-  return parsed;
-};
+    const text = await generateText(prompt);
+
+    const parsed = safeParseJSON(text);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed;
+  };
 
 module.exports = {
   AIServiceError,

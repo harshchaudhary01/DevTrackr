@@ -1,6 +1,6 @@
 /**
  * AI Prompt Engineering System for DevTrackr
- * All prompts are designed for structured, actionable output from Gemini.
+ * All prompts are designed for structured, actionable output from Groq.
  */
 
 /**
