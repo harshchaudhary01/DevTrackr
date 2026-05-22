@@ -88,6 +88,7 @@ export default function App() {
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileMsg, setProfileMsg] = useState('')
   const [insightBusy, setInsightBusy] = useState(false)
+  const autoInsightRepoRef = useRef('')
 
   const dSearch = useDeferredValue(repoSearch)
   const trackedIds = useMemo(
@@ -184,11 +185,11 @@ export default function App() {
     } catch (e) { setGithubMsg(e.message) } finally { setGithubBusy(false) }
   }
 
-  const loadGithubRepos = async () => {
+  const loadGithubRepos = useCallback(async () => {
     setAvailableBusy(true); setGithubMsg('')
     try { const d = await req('/github/repos'); setAvailableRepos(d.repositories || []) }
     catch (e) { setGithubMsg(e.message) } finally { setAvailableBusy(false) }
-  }
+  }, [req])
 
   const handleTrack = async (repo) => {
     setTrackingId(String(repo.githubId))
@@ -208,18 +209,33 @@ export default function App() {
     setSyncingId(String(id)); setGithubMsg('')
     try {
       const d = await req(`/github/sync/${id}`, { method: 'POST' }); setGithubMsg(d.message); await refreshPortfolio()
+      autoInsightRepoRef.current = ''
       if (String(selectedRepoId) === String(id)) await loadRepo(id)
     } catch (e) { setGithubMsg(e.message) } finally { setSyncingId('') }
   }
 
-  const handleInsights = async (force = false) => {
+  const handleInsights = useCallback(async (force = false) => {
     if (!selectedRepoId) return
     setInsightBusy(true); setBundle(c => ({ ...c, error: '' }))
     try {
       const d = await req(`/ai/generate/${selectedRepoId}${force ? '?force=true' : ''}`, { method: 'POST' })
       setBundle(c => ({ ...c, insights: d.insights }))
+      autoInsightRepoRef.current = String(selectedRepoId)
     } catch (e) { setBundle(c => ({ ...c, error: e.message })) } finally { setInsightBusy(false) }
-  }
+  }, [req, selectedRepoId])
+
+  useEffect(() => {
+    if (activeTab !== 'github' || availableBusy || availableRepos.length > 0 || !user?.githubUsername) return
+    void loadGithubRepos()
+  }, [activeTab, availableBusy, availableRepos.length, user?.githubUsername, loadGithubRepos])
+
+  useEffect(() => {
+    const hasInsights = Boolean(bundle.insights || bundle.dashboard?.insights)
+    if (activeTab !== 'detail' || !selectedRepoId || !bundle.dashboard || bundle.loading || insightBusy || hasInsights) return
+    if (autoInsightRepoRef.current === String(selectedRepoId)) return
+    autoInsightRepoRef.current = String(selectedRepoId)
+    void handleInsights(false)
+  }, [activeTab, selectedRepoId, bundle.dashboard, bundle.insights, bundle.loading, insightBusy, handleInsights])
 
   const handleProfile = async (e) => {
     e.preventDefault(); setProfileBusy(true); setProfileMsg('')
@@ -470,7 +486,17 @@ function HealthBar({ val }) {
    REPOS TAB
 ══════════════════════════════════════ */
 function ReposTab({ ov, tracked, selectedId, setSelectedId, setTab, handleSync, syncingId, handleUntrack, trackingId }) {
-  const repos = ov?.repos?.length ? ov.repos : tracked
+  const overviewMap = new Map((ov?.repos || []).map(repo => [String(repo.id || repo._id), repo]))
+  const repos = tracked.length
+    ? tracked.map(repo => {
+      const summary = overviewMap.get(String(repo._id)) || {}
+      return {
+        ...summary,
+        ...repo,
+        metrics: summary.metrics || repo.metrics,
+      }
+    })
+    : (ov?.repos || [])
   return (
     <div className="dt-tab-body">
       <div className="dt-tab-hd">
