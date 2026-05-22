@@ -1,1 +1,163 @@
 @import "tailwindcss";
+/* ─── Global Resets & Base ─────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #030712;
+  color: #e2e8f0;
+  font-family: 'Rajdhani', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ─── Scrollbar Styling ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0f1e;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.6);
+}
+
+/* ─── Custom Component Classes ──────────────────────────────────────────────── */
+@layer components {
+  /* Glass card */
+  .glass-card {
+    @apply bg-dark-700 border border-glass-border rounded-xl backdrop-blur-sm;
+    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+
+  /* Neon gradient border */
+  .neon-border {
+    border: 1px solid transparent;
+    background: linear-gradient(#0d1427, #0d1427) padding-box,
+                linear-gradient(135deg, rgba(0,212,255,0.5), rgba(124,58,237,0.5)) border-box;
+  }
+
+  /* Cyber button */
+  .btn-cyber {
+    @apply relative px-6 py-2.5 font-display text-sm font-medium tracking-widest uppercase;
+    @apply bg-gradient-to-r from-neon-blue to-neon-purple text-white;
+    @apply rounded-lg transition-all duration-300;
+    @apply hover:shadow-neon-blue hover:scale-105 active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply relative px-6 py-2.5 font-display text-sm font-medium tracking-widest uppercase;
+    @apply border border-neon-blue/30 text-neon-blue rounded-lg;
+    @apply transition-all duration-300 hover:bg-neon-blue/10 hover:border-neon-blue/60;
+  }
+
+  /* KPI Score ring */
+  .score-ring {
+    @apply relative inline-flex items-center justify-center;
+  }
+
+  /* Sidebar item */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400;
+    @apply transition-all duration-200 cursor-pointer font-body font-medium;
+    @apply hover:text-neon-blue hover:bg-neon-blue/10;
+  }
+
+  .sidebar-item.active {
+    @apply text-neon-blue bg-neon-blue/10 border border-neon-blue/20;
+  }
+
+  /* Status badge */
+  .badge-open { @apply px-2 py-0.5 rounded-full text-xs bg-green-500/20 text-green-400 border border-green-500/30; }
+  .badge-closed { @apply px-2 py-0.5 rounded-full text-xs bg-slate-500/20 text-slate-400 border border-slate-500/30; }
+  .badge-merged { @apply px-2 py-0.5 rounded-full text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30; }
+  .badge-high { @apply px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400 border border-red-500/30; }
+  .badge-medium { @apply px-2 py-0.5 rounded-full text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30; }
+  .badge-low { @apply px-2 py-0.5 rounded-full text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30; }
+
+  /* Loading skeleton */
+  .skeleton {
+    @apply bg-dark-500 rounded animate-pulse;
+  }
+
+  /* Section header */
+  .section-title {
+    @apply font-display text-lg font-semibold text-white tracking-wide;
+  }
+}
+
+/* ─── Cyber Grid Background ─────────────────────────────────────────────────── */
+.cyber-bg {
+  background-color: #030712;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ─── Glow Effects ──────────────────────────────────────────────────────────── */
+.glow-text-blue {
+  text-shadow: 0 0 20px rgba(0,212,255,0.8), 0 0 40px rgba(0,212,255,0.4);
+}
+
+.glow-text-purple {
+  text-shadow: 0 0 20px rgba(124,58,237,0.8), 0 0 40px rgba(124,58,237,0.4);
+}
+
+/* ─── Recharts Custom ───────────────────────────────────────────────────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: #0d1427 !important;
+  border: 1px solid rgba(0,212,255,0.2) !important;
+  border-radius: 8px !important;
+  color: #e2e8f0 !important;
+  font-family: 'Rajdhani', sans-serif !important;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255,255,255,0.05) !important;
+}
+
+/* ─── Scan Line Animation ───────────────────────────────────────────────────── */
+@keyframes scanLine {
+  0% { top: -10%; }
+  100% { top: 110%; }
+}
+
+.scan-line {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0,212,255,0.1), transparent);
+  animation: scanLine 8s linear infinite;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ─── Number Counter Animation ──────────────────────────────────────────────── */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.count-up {
+  animation: countUp 0.5s ease-out forwards;
+}
