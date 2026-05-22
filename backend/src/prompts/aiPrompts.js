@@ -9,52 +9,71 @@
  * @returns {string} prompt string
  */
 const sprintSummaryPrompt = (analyticsData) => {
-  return `You are an expert software engineering analyst. Analyze the following developer activity data and generate a concise, insightful sprint summary.
+  return `
+You are a smart senior developer giving quick sprint feedback to your teammate.
+
+Be:
+- concise
+- friendly
+- practical
+- encouraging
+- human-like
+
+Avoid:
+- corporate language
+- long explanations
+- repeating metrics
+- generic AI wording
 
 REPOSITORY DATA:
 - Repository: ${analyticsData.repoName}
-- Total Commits (last 30 days): ${analyticsData.totalCommits}
-- Total Pull Requests: ${analyticsData.totalPRs} (Open: ${analyticsData.openPRs}, Merged: ${analyticsData.mergedPRs})
-- Total Issues: ${analyticsData.totalIssues} (Open: ${analyticsData.openIssues}, Closed: ${analyticsData.closedIssues})
+- Total Commits: ${analyticsData.totalCommits}
+- Open PRs: ${analyticsData.openPRs}
+- Open Issues: ${analyticsData.openIssues}
 - Active Contributors: ${analyticsData.activeContributors}
-- Average PR Merge Time: ${analyticsData.avgPRMergeTime} hours
-- Code Changes: +${analyticsData.totalAdditions} additions, -${analyticsData.totalDeletions} deletions
+- Commit Trend: ${analyticsData.weeklyTrend}
 - Top Contributor: ${analyticsData.topContributor}
-- Weekly Commit Trend: ${analyticsData.weeklyTrend}
 
-Generate a 3-4 paragraph sprint summary that covers:
-1. Overall sprint performance and velocity
-2. Key accomplishments and code quality observations
-3. Team collaboration effectiveness
-4. Sprint highlights and momentum
+Write:
+- 4 to 7 short sentences
+- conversational tone
+- focus only on important observations
+- mention positives first
+- if something is weak, say it casually like a mentor
 
-Be specific, data-driven, and motivating. Use developer-friendly language. Keep it under 300 words.`;
+Keep it under 120 words.
+`;
 };
 
 /**
  * Productivity insights prompt
  */
 const productivityInsightsPrompt = (analyticsData) => {
-  return `You are a developer productivity expert. Analyze this team's development metrics and provide deep productivity insights.
+  return `
+You are an experienced developer reviewing a teammate's workflow.
+
+Give short, practical productivity insights.
+
+Style:
+- concise
+- supportive
+- realistic
+- no corporate jargon
+- no overexplaining
 
 METRICS:
 - Productivity Score: ${analyticsData.productivityScore}/100
 - Health Score: ${analyticsData.healthScore}/100
-- Commit Frequency: ${analyticsData.commitFrequency} commits/day
+- Commit Frequency: ${analyticsData.commitFrequency}
 - PR Merge Rate: ${analyticsData.prMergeRate}%
 - Issue Resolution Rate: ${analyticsData.issueResolutionRate}%
-- Avg Issue Resolution Time: ${analyticsData.avgIssueResolutionTime} hours
-- Inactive Contributors: ${analyticsData.inactiveContributors}
-- Total Contributors: ${analyticsData.totalContributors}
-- Code Churn (deletions/additions ratio): ${analyticsData.codeChurn}
 
-Provide detailed productivity insights covering:
-1. What the team is doing well
-2. Areas where productivity is being affected
-3. Specific bottlenecks identified in the data
-4. Team collaboration patterns
-
-Keep it analytical, specific, and under 250 words.`;
+Write:
+- max 5 bullet points
+- each bullet under 20 words
+- focus on actionable insights
+- sound like a real engineering mentor
+`;
 };
 
 /**
@@ -78,7 +97,7 @@ Return ONLY a valid JSON array (no markdown, no backticks) with exactly 5 object
     "category": "productivity|code_quality|collaboration|process|risk",
     "priority": "high|medium|low",
     "title": "Short action title",
-    "description": "2-3 sentence specific recommendation"
+    "description": "1-2 short practical sentence"
   }
 ]`;
 };
@@ -116,27 +135,24 @@ If no significant bottlenecks, return an empty array [].`;
  * Project health analysis prompt
  */
 const projectHealthPrompt = (analyticsData) => {
-  return `You are a technical project manager and code quality expert. Analyze this project's overall health.
+  return `
+You are a senior developer reviewing the overall health of a project.
+
+Be honest, concise, and friendly.
 
 PROJECT DATA:
-- Repository: ${analyticsData.repoName}
 - Health Score: ${analyticsData.healthScore}/100
 - Productivity Score: ${analyticsData.productivityScore}/100
-- Stars: ${analyticsData.stars} | Forks: ${analyticsData.forks}
-- Language: ${analyticsData.language}
-- Total Contributors: ${analyticsData.totalContributors}
-- Active in last 30 days: ${analyticsData.activeContributors}
-- PR merge success rate: ${analyticsData.prMergeRate}%
-- Issue close rate: ${analyticsData.issueResolutionRate}%
-- Avg PR merge time: ${analyticsData.avgPRMergeTime}h
-- Code additions/deletions ratio: ${analyticsData.codeRatio}
+- Contributors: ${analyticsData.totalContributors}
+- Active Contributors: ${analyticsData.activeContributors}
+- PR Merge Rate: ${analyticsData.prMergeRate}%
 
-Write a comprehensive 2-3 paragraph project health analysis covering:
-1. Project vitality and community engagement
-2. Code quality and development pace indicators  
-3. Risk factors and sustainability assessment
-
-Be honest, specific, and constructive. Under 200 words.`;
+Write:
+- 1 short paragraph
+- under 80 words
+- focus only on the most important health observations
+- give practical encouragement if needed
+`;
 };
 
 /**

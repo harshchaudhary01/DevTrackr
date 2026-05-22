@@ -105,10 +105,10 @@ const generateText = async (prompt) => {
           },
         ],
 
-        temperature: 0.3,
+        temperature: 0.4,
 
         // Helps keep responses concise
-        max_tokens: 2000,
+        max_tokens: 400,
       });
 
     return completion.choices[0].message.content;
