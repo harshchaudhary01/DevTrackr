@@ -1,33 +1,69 @@
 import {
-  startTransition,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useState,
+  startTransition, useCallback, useDeferredValue,
+  useEffect, useMemo, useState, useRef,
 } from 'react'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const authDefaults = { name: '', email: '', password: '' }
 
-const authDefaults = {
-  name: '',
-  email: '',
-  password: '',
+/* ── count-up hook ── */
+function useCountUp(target, duration = 900) {
+  const [val, setVal] = useState(0)
+  useEffect(() => {
+    const n = parseFloat(target)
+    if (isNaN(n)) { setVal(target); return }
+    let start = null
+    const step = ts => {
+      if (!start) start = ts
+      const p = Math.min((ts - start) / duration, 1)
+      setVal(Math.floor(p * n))
+      if (p < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }, [target, duration])
+  return val
 }
 
-const profileDefaults = {
-  name: '',
+/* ── Particle system ── */
+function Particles() {
+  const canvasRef = useRef(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    let W = canvas.width = window.innerWidth
+    let H = canvas.height = window.innerHeight
+    const particles = Array.from({ length: 60 }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - 0.5) * 0.3, vy: (Math.random() - 0.5) * 0.3,
+      size: Math.random() * 1.5 + 0.5,
+      alpha: Math.random() * 0.4 + 0.1,
+    }))
+    let raf
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H)
+      particles.forEach(p => {
+        p.x += p.vx; p.y += p.vy
+        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0
+        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(139,92,246,${p.alpha})`
+        ctx.fill()
+      })
+      raf = requestAnimationFrame(draw)
+    }
+    draw()
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight }
+    window.addEventListener('resize', resize)
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize) }
+  }, [])
+  return <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.6 }} />
 }
 
-const navItems = [
-  { id: 'overview', label: 'Mission Control' },
-  { id: 'repos', label: 'Repo Hangar' },
-  { id: 'github', label: 'GitHub Link' },
-  { id: 'profile', label: 'Pilot Profile' },
-]
-
-function App() {
-  const [token, setToken] = useState(() => localStorage.getItem('devtrackr_token') || '')
+/* ── Main App ── */
+export default function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('dt_token') || '')
   const [user, setUser] = useState(null)
   const [authMode, setAuthMode] = useState('login')
   const [authForm, setAuthForm] = useState(authDefaults)
@@ -35,1279 +71,717 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [appBusy, setAppBusy] = useState(false)
   const [appError, setAppError] = useState('')
-  const [activeView, setActiveView] = useState('overview')
+  const [activeTab, setActiveTab] = useState('overview')
   const [overviewData, setOverviewData] = useState(null)
   const [trackedRepos, setTrackedRepos] = useState([])
   const [availableRepos, setAvailableRepos] = useState([])
   const [availableBusy, setAvailableBusy] = useState(false)
   const [githubToken, setGithubToken] = useState('')
   const [githubBusy, setGithubBusy] = useState(false)
-  const [githubMessage, setGithubMessage] = useState('')
+  const [githubMsg, setGithubMsg] = useState('')
   const [repoSearch, setRepoSearch] = useState('')
   const [selectedRepoId, setSelectedRepoId] = useState('')
-  const [repoBundle, setRepoBundle] = useState({
-    loading: false,
-    error: '',
-    dashboard: null,
-    commits: null,
-    prs: null,
-    issues: null,
-    contributors: null,
-    insights: null,
-  })
-  const [syncingRepoId, setSyncingRepoId] = useState('')
-  const [trackingRepoId, setTrackingRepoId] = useState('')
-  const [profileForm, setProfileForm] = useState(profileDefaults)
+  const [bundle, setBundle] = useState({ loading: false, error: '', dashboard: null, insights: null })
+  const [syncingId, setSyncingId] = useState('')
+  const [trackingId, setTrackingId] = useState('')
+  const [profileForm, setProfileForm] = useState({ name: '' })
   const [profileBusy, setProfileBusy] = useState(false)
-  const [profileMessage, setProfileMessage] = useState('')
+  const [profileMsg, setProfileMsg] = useState('')
   const [insightBusy, setInsightBusy] = useState(false)
 
-  const deferredSearch = useDeferredValue(repoSearch)
-
-  const trackedRepoIds = useMemo(
-    () => new Set(trackedRepos.filter((repo) => repo.isActive !== false).map((repo) => String(repo.githubId))),
-    [trackedRepos],
+  const dSearch = useDeferredValue(repoSearch)
+  const trackedIds = useMemo(
+    () => new Set(trackedRepos.filter(r => r.isActive !== false).map(r => String(r.githubId))),
+    [trackedRepos]
   )
+  const filteredRepos = useMemo(() => {
+    const q = dSearch.trim().toLowerCase()
+    return availableRepos.filter(r => !q || [r.name, r.fullName, r.language].filter(Boolean).some(v => v.toLowerCase().includes(q)))
+  }, [availableRepos, dSearch])
+  const selectedMeta = useMemo(() => {
+    return [...(overviewData?.repos || []), ...trackedRepos].find(r => String(r.id || r._id) === String(selectedRepoId)) || null
+  }, [overviewData, trackedRepos, selectedRepoId])
 
-  const filteredAvailableRepos = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase()
-    return availableRepos.filter((repo) => {
-      if (!query) {
-        return true
-      }
-
-      return [repo.name, repo.fullName, repo.language]
-        .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(query))
+  const req = useCallback(async (path, opts = {}) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+      ...opts,
     })
-  }, [availableRepos, deferredSearch])
-
-  const selectedRepoMeta = useMemo(() => {
-    const merged = [
-      ...(overviewData?.repos || []),
-      ...trackedRepos,
-    ]
-
-    return merged.find((repo) => String(repo.id || repo._id) === String(selectedRepoId)) || null
-  }, [overviewData, selectedRepoId, trackedRepos])
-
-  const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
-      },
-      ...options,
-    })
-
-    const raw = await response.text()
+    const raw = await res.text()
     const data = raw ? JSON.parse(raw) : {}
-
-    if (!response.ok) {
-      throw new Error(data.message || 'Request failed.')
-    }
-
+    if (!res.ok) throw new Error(data.message || 'Request failed')
     return data
   }, [token])
 
   const refreshSession = useCallback(async () => {
-    if (!token) {
-      return
-    }
-
-    setAppBusy(true)
-    setAppError('')
-
+    if (!token) return
+    setAppBusy(true); setAppError('')
     try {
-      const [meResult, overviewResult, trackedResult] = await Promise.allSettled([
-        request('/auth/me'),
-        request('/dashboard/overview'),
-        request('/github/repos/tracked'),
+      const [me, ov, tr] = await Promise.allSettled([
+        req('/auth/me'), req('/dashboard/overview'), req('/github/repos/tracked'),
       ])
+      if (me.status === 'fulfilled') { setUser(me.value.user); setProfileForm({ name: me.value.user.name || '' }) }
+      else throw me.reason
+      setOverviewData(ov.status === 'fulfilled' ? ov.value : { overview: { totalRepos: 0, totalCommits: 0, totalPRs: 0, totalIssues: 0, avgProductivityScore: 0, avgHealthScore: 0 }, repos: [] })
+      setTrackedRepos(tr.status === 'fulfilled' ? tr.value.repositories || [] : [])
+    } catch (e) {
+      setAppError(e.message)
+      if (/token|login|expired/i.test(e.message)) { localStorage.removeItem('dt_token'); setToken(''); setUser(null) }
+    } finally { setAppBusy(false) }
+  }, [req, token])
 
-      if (meResult.status === 'fulfilled') {
-        setUser(meResult.value.user)
-        setProfileForm({ name: meResult.value.user.name || '' })
-      } else {
-        throw meResult.reason
-      }
-
-      if (overviewResult.status === 'fulfilled') {
-        setOverviewData(overviewResult.value)
-      } else {
-        setOverviewData({
-          overview: {
-            totalRepos: 0,
-            totalCommits: 0,
-            totalPRs: 0,
-            totalIssues: 0,
-            avgProductivityScore: 0,
-            avgHealthScore: 0,
-          },
-          repos: [],
-        })
-      }
-
-      if (trackedResult.status === 'fulfilled') {
-        setTrackedRepos(trackedResult.value.repositories || [])
-      } else {
-        setTrackedRepos([])
-      }
-    } catch (error) {
-      const message = error.message || 'Session refresh failed.'
-      setAppError(message)
-
-      if (/token|login|expired|denied/i.test(message)) {
-        localStorage.removeItem('devtrackr_token')
-        setToken('')
-        setUser(null)
-      }
-    } finally {
-      setAppBusy(false)
-    }
-  }, [request, token])
-
-  const loadRepoDetails = useCallback(async (repoId) => {
-    if (!repoId || !token) {
-      return
-    }
-
-    setRepoBundle((current) => ({
-      ...current,
-      loading: true,
-      error: '',
-    }))
-
-    const results = await Promise.allSettled([
-      request(`/dashboard/repo/${repoId}`),
-      request(`/analytics/${repoId}/commits`),
-      request(`/analytics/${repoId}/prs`),
-      request(`/analytics/${repoId}/issues`),
-      request(`/analytics/${repoId}/contributors`),
+  const loadRepo = useCallback(async (id) => {
+    if (!id || !token) return
+    setBundle(c => ({ ...c, loading: true, error: '' }))
+    const [db, cm, pr, is, cn] = await Promise.allSettled([
+      req(`/dashboard/repo/${id}`), req(`/analytics/${id}/commits`),
+      req(`/analytics/${id}/prs`), req(`/analytics/${id}/issues`), req(`/analytics/${id}/contributors`),
     ])
-
-    const dashboardResult = results[0]
-
-    if (dashboardResult.status === 'rejected') {
-      setRepoBundle({
-        loading: false,
-        error: dashboardResult.reason.message || 'Repository details are unavailable right now.',
-        dashboard: null,
-        commits: null,
-        prs: null,
-        issues: null,
-        contributors: null,
-        insights: null,
-      })
-      return
+    if (db.status === 'rejected') {
+      setBundle({ loading: false, error: db.reason.message || 'Unavailable', dashboard: null, insights: null }); return
     }
-
-    setRepoBundle({
-      loading: false,
-      error: '',
-      dashboard: dashboardResult.value,
-      commits: results[1].status === 'fulfilled' ? results[1].value : null,
-      prs: results[2].status === 'fulfilled' ? results[2].value : null,
-      issues: results[3].status === 'fulfilled' ? results[3].value : null,
-      contributors: results[4].status === 'fulfilled' ? results[4].value : null,
-      insights: dashboardResult.value.insights || null,
-    })
-  }, [request, token])
+    setBundle({ loading: false, error: '', dashboard: db.value, commits: cm.status === 'fulfilled' ? cm.value : null, prs: pr.status === 'fulfilled' ? pr.value : null, issues: is.status === 'fulfilled' ? is.value : null, contributors: cn.status === 'fulfilled' ? cn.value : null, insights: db.value.insights || null })
+  }, [req, token])
 
   useEffect(() => {
-    if (token) {
-      void refreshSession()
-    } else {
-      setUser(null)
-      setOverviewData(null)
-      setTrackedRepos([])
-      setAvailableRepos([])
-      setSelectedRepoId('')
-      setRepoBundle({
-        loading: false,
-        error: '',
-        dashboard: null,
-        commits: null,
-        prs: null,
-        issues: null,
-        contributors: null,
-        insights: null,
-      })
-    }
+    if (token) void refreshSession()
+    else { setUser(null); setOverviewData(null); setTrackedRepos([]); setBundle({ loading: false, error: '', dashboard: null, insights: null }) }
   }, [token, refreshSession])
 
   useEffect(() => {
     if (!selectedRepoId && (overviewData?.repos?.length || trackedRepos.length)) {
-      const firstRepo = overviewData?.repos?.[0]?.id || trackedRepos[0]?._id
-      if (firstRepo) {
-        startTransition(() => {
-          setSelectedRepoId(String(firstRepo))
-        })
-      }
+      const first = overviewData?.repos?.[0]?.id || trackedRepos[0]?._id
+      if (first) startTransition(() => setSelectedRepoId(String(first)))
     }
   }, [overviewData, trackedRepos, selectedRepoId])
 
-  useEffect(() => {
-    if (selectedRepoId && token) {
-      void loadRepoDetails(selectedRepoId)
-    }
-  }, [selectedRepoId, token, loadRepoDetails])
+  useEffect(() => { if (selectedRepoId && token) void loadRepo(selectedRepoId) }, [selectedRepoId, token, loadRepo])
 
   const refreshPortfolio = async () => {
-    const [overviewResult, trackedResult] = await Promise.allSettled([
-      request('/dashboard/overview'),
-      request('/github/repos/tracked'),
-    ])
-
-    if (overviewResult.status === 'fulfilled') {
-      setOverviewData(overviewResult.value)
-    }
-
-    if (trackedResult.status === 'fulfilled') {
-      setTrackedRepos(trackedResult.value.repositories || [])
-    }
+    const [o, t] = await Promise.allSettled([req('/dashboard/overview'), req('/github/repos/tracked')])
+    if (o.status === 'fulfilled') setOverviewData(o.value)
+    if (t.status === 'fulfilled') setTrackedRepos(t.value.repositories || [])
   }
 
-  const handleAuthSubmit = async (event) => {
-    event.preventDefault()
-    setAuthBusy(true)
-    setAuthError('')
-
+  const handleAuth = async (e) => {
+    e.preventDefault(); setAuthBusy(true); setAuthError('')
     try {
-      const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register'
-      const payload = authMode === 'login'
-        ? { email: authForm.email, password: authForm.password }
-        : authForm
-
-      const data = await request(endpoint, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-
-      localStorage.setItem('devtrackr_token', data.token)
-      setToken(data.token)
-      setUser(data.user)
-      setProfileForm({ name: data.user.name || '' })
-      setAuthForm(authDefaults)
-      setAuthMode('login')
-      setActiveView('overview')
-    } catch (error) {
-      setAuthError(error.message || 'Authentication failed.')
-    } finally {
-      setAuthBusy(false)
-    }
+      const ep = authMode === 'login' ? '/auth/login' : '/auth/register'
+      const body = authMode === 'login' ? { email: authForm.email, password: authForm.password } : authForm
+      const data = await req(ep, { method: 'POST', body: JSON.stringify(body) })
+      localStorage.setItem('dt_token', data.token); setToken(data.token); setUser(data.user)
+      setProfileForm({ name: data.user.name || '' }); setAuthForm(authDefaults); setActiveTab('overview')
+    } catch (e) { setAuthError(e.message) } finally { setAuthBusy(false) }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('devtrackr_token')
-    setToken('')
-    setGithubToken('')
-    setGithubMessage('')
-    setProfileMessage('')
-    setAppError('')
-  }
+  const handleLogout = () => { localStorage.removeItem('dt_token'); setToken(''); setGithubToken(''); setGithubMsg(''); setProfileMsg('') }
 
-  const handleConnectGithub = async (event) => {
-    event.preventDefault()
-    setGithubBusy(true)
-    setGithubMessage('')
-
+  const handleConnectGithub = async (e) => {
+    e.preventDefault(); setGithubBusy(true); setGithubMsg('')
     try {
-      const data = await request('/github/connect', {
-        method: 'POST',
-        body: JSON.stringify({ token: githubToken }),
-      })
-
-      setGithubMessage(data.message)
-      setGithubToken('')
-      await refreshSession()
-      setActiveView('github')
-    } catch (error) {
-      setGithubMessage(error.message || 'GitHub connection failed.')
-    } finally {
-      setGithubBusy(false)
-    }
+      const d = await req('/github/connect', { method: 'POST', body: JSON.stringify({ token: githubToken }) })
+      setGithubMsg(d.message); setGithubToken(''); await refreshSession(); setActiveTab('github')
+    } catch (e) { setGithubMsg(e.message) } finally { setGithubBusy(false) }
   }
 
   const loadGithubRepos = async () => {
-    setAvailableBusy(true)
-    setGithubMessage('')
-
-    try {
-      const data = await request('/github/repos')
-      setAvailableRepos(data.repositories || [])
-    } catch (error) {
-      setGithubMessage(error.message || 'Unable to load repositories.')
-    } finally {
-      setAvailableBusy(false)
-    }
+    setAvailableBusy(true); setGithubMsg('')
+    try { const d = await req('/github/repos'); setAvailableRepos(d.repositories || []) }
+    catch (e) { setGithubMsg(e.message) } finally { setAvailableBusy(false) }
   }
 
-  const handleTrackRepo = async (repo) => {
-    setTrackingRepoId(String(repo.githubId))
-
-    try {
-      await request('/github/repos/track', {
-        method: 'POST',
-        body: JSON.stringify(repo),
-      })
-
-      await refreshPortfolio()
-      setGithubMessage(`Tracking ${repo.fullName}.`)
-    } catch (error) {
-      setGithubMessage(error.message || 'Unable to track repository.')
-    } finally {
-      setTrackingRepoId('')
-    }
+  const handleTrack = async (repo) => {
+    setTrackingId(String(repo.githubId))
+    try { await req('/github/repos/track', { method: 'POST', body: JSON.stringify(repo) }); await refreshPortfolio(); setGithubMsg(`Tracking ${repo.fullName}`) }
+    catch (e) { setGithubMsg(e.message) } finally { setTrackingId('') }
   }
 
-  const handleUntrackRepo = async (repoId) => {
-    setTrackingRepoId(String(repoId))
-
+  const handleUntrack = async (id) => {
+    setTrackingId(String(id))
     try {
-      await request(`/github/repos/${repoId}`, { method: 'DELETE' })
-      await refreshPortfolio()
-
-      if (String(selectedRepoId) === String(repoId)) {
-        setSelectedRepoId('')
-      }
-    } catch (error) {
-      setGithubMessage(error.message || 'Unable to stop tracking repository.')
-    } finally {
-      setTrackingRepoId('')
-    }
+      await req(`/github/repos/${id}`, { method: 'DELETE' }); await refreshPortfolio()
+      if (String(selectedRepoId) === String(id)) setSelectedRepoId('')
+    } catch (e) { setGithubMsg(e.message) } finally { setTrackingId('') }
   }
 
-  const handleSyncRepo = async (repoId) => {
-    setSyncingRepoId(String(repoId))
-    setGithubMessage('')
-
+  const handleSync = async (id) => {
+    setSyncingId(String(id)); setGithubMsg('')
     try {
-      const data = await request(`/github/sync/${repoId}`, { method: 'POST' })
-      setGithubMessage(data.message)
-      await refreshPortfolio()
-
-      if (String(selectedRepoId) === String(repoId)) {
-        await loadRepoDetails(repoId)
-      }
-    } catch (error) {
-      setGithubMessage(error.message || 'Unable to sync repository.')
-    } finally {
-      setSyncingRepoId('')
-    }
+      const d = await req(`/github/sync/${id}`, { method: 'POST' }); setGithubMsg(d.message); await refreshPortfolio()
+      if (String(selectedRepoId) === String(id)) await loadRepo(id)
+    } catch (e) { setGithubMsg(e.message) } finally { setSyncingId('') }
   }
 
-  const handleGenerateInsights = async (force = false) => {
-    if (!selectedRepoId) {
-      return
-    }
-
-    setInsightBusy(true)
-    setRepoBundle((current) => ({
-      ...current,
-      error: '',
-    }))
-
+  const handleInsights = async (force = false) => {
+    if (!selectedRepoId) return
+    setInsightBusy(true); setBundle(c => ({ ...c, error: '' }))
     try {
-      const data = await request(`/ai/generate/${selectedRepoId}${force ? '?force=true' : ''}`, {
-        method: 'POST',
-      })
-
-      setRepoBundle((current) => ({
-        ...current,
-        insights: data.insights,
-      }))
-    } catch (error) {
-      setRepoBundle((current) => ({
-        ...current,
-        error: error.message || 'AI generation failed.',
-      }))
-    } finally {
-      setInsightBusy(false)
-    }
+      const d = await req(`/ai/generate/${selectedRepoId}${force ? '?force=true' : ''}`, { method: 'POST' })
+      setBundle(c => ({ ...c, insights: d.insights }))
+    } catch (e) { setBundle(c => ({ ...c, error: e.message })) } finally { setInsightBusy(false) }
   }
 
-  const handleProfileUpdate = async (event) => {
-    event.preventDefault()
-    setProfileBusy(true)
-    setProfileMessage('')
-
+  const handleProfile = async (e) => {
+    e.preventDefault(); setProfileBusy(true); setProfileMsg('')
     try {
-      const data = await request('/auth/profile', {
-        method: 'PUT',
-        body: JSON.stringify(profileForm),
-      })
-
-      setUser((current) => ({
-        ...current,
-        ...data.user,
-      }))
-      setProfileMessage('Profile updated successfully.')
-    } catch (error) {
-      setProfileMessage(error.message || 'Unable to update profile.')
-    } finally {
-      setProfileBusy(false)
-    }
+      const d = await req('/auth/profile', { method: 'PUT', body: JSON.stringify(profileForm) })
+      setUser(c => ({ ...c, ...d.user })); setProfileMsg('Profile updated!')
+    } catch (e) { setProfileMsg(e.message) } finally { setProfileBusy(false) }
   }
 
-  if (!token) {
-    return (
-      <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(129,230,217,0.16),_transparent_30%),linear-gradient(160deg,_#09090f_0%,_#111322_45%,_#1d1028_100%)] text-slate-100">
-        <div className="anime-grid fixed inset-0 opacity-50" />
-        <div className="scanline fixed inset-0 pointer-events-none opacity-30" />
-        <main className="relative mx-auto flex min-h-screen max-w-7xl flex-col justify-center gap-10 px-4 py-10 lg:flex-row lg:items-center lg:px-8">
-          <section className="max-w-2xl flex-1">
-            <span className="pill mb-6 inline-flex">DevTrackr // anime operations deck</span>
-            <h1 className="max-w-3xl text-5xl font-black uppercase leading-[0.95] tracking-[0.08em] text-white md:text-7xl">
-              Ship your repo analytics like a season finale.
+  /* ── AUTH SCREEN ── */
+  if (!token) return (
+    <div className="dt-auth">
+      <Particles />
+      <div className="dt-auth__bg" />
+      <div className="dt-auth__grid" />
+
+      <div className="dt-auth__layout">
+        <div className="dt-auth__left">
+          <div className="dt-auth__logo">
+            <span className="dt-logo__mark">⬡</span>
+            <span className="dt-logo__text">DevTrackr</span>
+          </div>
+          <div className="dt-auth__tagline-wrap">
+            <span className="dt-auth__eyebrow">MISSION CONTROL</span>
+            <h1 className="dt-auth__headline">
+              Your code,<br />
+              <span className="dt-auth__hl-accent">decoded by AI.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-lg text-slate-300">
-              Your backend already supports authentication, GitHub repository tracking,
-              analytics sync, AI insights, and dashboard summaries. This frontend turns that
-              into a bold mission-control experience built for real usage instead of a starter template.
+            <p className="dt-auth__sub">
+              Connect GitHub repos, get real-time analytics, AI sprint summaries,
+              and bottleneck detection — built for the developer arc.
             </p>
-            <div className="mt-8 grid gap-4 sm:grid-cols-3">
-              <FeatureCard
-                title="Track Repos"
-                value="GitHub sync"
-                description="Connect a personal token, fetch repositories, and choose which ones to monitor."
-              />
-              <FeatureCard
-                title="Read Signals"
-                value="Health + velocity"
-                description="Surface commits, PRs, issues, contributor activity, and heatmap trends."
-              />
-              <FeatureCard
-                title="Ask AI"
-                value="Tactical insights"
-                description="Generate sprint summaries, recommendations, bottlenecks, and risk analysis."
-              />
-            </div>
-          </section>
-
-          <section className="relative w-full max-w-xl flex-1">
-            <div className="panel shadow-[0_30px_80px_rgba(0,0,0,0.45)]">
-              <div className="mb-6 flex items-center justify-between">
+          </div>
+          <div className="dt-auth__features">
+            {[
+              { icon: '◈', title: 'GitHub Sync', desc: 'Live repo tracking & commits' },
+              { icon: '✦', title: 'AI Insights', desc: 'Sprint summaries & risk analysis' },
+              { icon: '▲', title: 'Analytics', desc: 'Heatmaps, trends & contributors' },
+            ].map(f => (
+              <div key={f.title} className="dt-auth__feat">
+                <span className="dt-auth__feat-icon">{f.icon}</span>
                 <div>
-                  <p className="text-sm uppercase tracking-[0.25em] text-cyan-200/70">Pilot Access</p>
-                  <h2 className="text-3xl font-black uppercase tracking-[0.08em] text-white">
-                    {authMode === 'login' ? 'Log In' : 'Create Account'}
-                  </h2>
+                  <div className="dt-auth__feat-title">{f.title}</div>
+                  <div className="dt-auth__feat-desc">{f.desc}</div>
                 </div>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => {
-                    setAuthError('')
-                    setAuthForm(authDefaults)
-                    setAuthMode((current) => (current === 'login' ? 'register' : 'login'))
-                  }}
-                >
-                  {authMode === 'login' ? 'Need an account?' : 'Already registered?'}
-                </button>
               </div>
+            ))}
+          </div>
+        </div>
 
-              <form className="space-y-4" onSubmit={handleAuthSubmit}>
-                {authMode === 'register' ? (
-                  <label className="field">
-                    <span>Name</span>
-                    <input
-                      autoComplete="name"
-                      value={authForm.name}
-                      onChange={(event) => setAuthForm((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="Captain coder"
-                      required
-                    />
-                  </label>
-                ) : null}
-
-                <label className="field">
-                  <span>Email</span>
-                  <input
-                    type="email"
-                    autoComplete={authMode === 'login' ? 'email' : 'username'}
-                    value={authForm.email}
-                    onChange={(event) => setAuthForm((current) => ({ ...current, email: event.target.value }))}
-                    placeholder="you@example.com"
-                    required
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Password</span>
-                  <input
-                    type="password"
-                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-                    value={authForm.password}
-                    onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="Minimum 6 characters"
-                    required
-                  />
-                </label>
-
-                {authError ? <p className="status-error">{authError}</p> : null}
-
-                <button className="primary-button w-full" type="submit" disabled={authBusy}>
-                  {authBusy ? 'Processing...' : authMode === 'login' ? 'Enter Mission Control' : 'Launch Account'}
-                </button>
-              </form>
-
-              <div className="mt-8 grid gap-3 border-t border-white/10 pt-6 text-sm text-slate-300 sm:grid-cols-2">
-                <StatusLine label="Backend coverage" value="Auth, GitHub, analytics, AI" />
-                <StatusLine label="Frontend stack" value="React 19 + Tailwind v4 + Vite" />
-              </div>
+        <div className="dt-auth__right">
+          <div className="dt-auth__card">
+            <div className="dt-auth__card-shine" />
+            <div className="dt-auth__tabs">
+              <button className={`dt-auth__tab ${authMode === 'login' ? 'is-active' : ''}`} onClick={() => { setAuthError(''); setAuthMode('login') }}>Sign In</button>
+              <button className={`dt-auth__tab ${authMode === 'register' ? 'is-active' : ''}`} onClick={() => { setAuthError(''); setAuthMode('register') }}>Register</button>
             </div>
-          </section>
-        </main>
+            <form className="dt-auth__form" onSubmit={handleAuth}>
+              {authMode === 'register' && (
+                <div className="dt-field">
+                  <label className="dt-label">Display Name</label>
+                  <input className="dt-input" placeholder="Itadori Yuji" value={authForm.name} onChange={e => setAuthForm(c => ({ ...c, name: e.target.value }))} required autoComplete="name" />
+                </div>
+              )}
+              <div className="dt-field">
+                <label className="dt-label">Email Address</label>
+                <input className="dt-input" type="email" placeholder="you@example.com" value={authForm.email} onChange={e => setAuthForm(c => ({ ...c, email: e.target.value }))} required autoComplete="email" />
+              </div>
+              <div className="dt-field">
+                <label className="dt-label">Password</label>
+                <input className="dt-input" type="password" placeholder="Min. 6 characters" value={authForm.password} onChange={e => setAuthForm(c => ({ ...c, password: e.target.value }))} required autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} />
+              </div>
+              {authError && <div className="dt-form-error">{authError}</div>}
+              <button className="dt-btn-primary dt-btn--full" type="submit" disabled={authBusy}>
+                {authBusy ? <span className="dt-spinner" /> : authMode === 'login' ? 'Enter Mission Control →' : 'Launch Your Arc →'}
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
-    )
-  }
+    </div>
+  )
+
+  /* ── DASHBOARD ── */
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: '⬡' },
+    { id: 'repos', label: 'Repos', icon: '◈' },
+    { id: 'github', label: 'GitHub', icon: '◉' },
+    { id: 'detail', label: 'Analytics', icon: '▲' },
+    { id: 'profile', label: 'Profile', icon: '◎' },
+  ]
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),_transparent_25%),radial-gradient(circle_at_top_right,_rgba(125,211,252,0.14),_transparent_30%),linear-gradient(180deg,_#0b1020_0%,_#111827_55%,_#0a0a12_100%)] text-slate-100">
-      <div className="anime-grid fixed inset-0 opacity-40" />
-      <div className="scanline fixed inset-0 pointer-events-none opacity-25" />
+    <div className="dt-dash">
+      <Particles />
+      <div className="dt-dash__bg" />
+      <div className="dt-dash__grid" />
 
-      <header className="relative border-b border-white/10 bg-slate-950/50 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div>
-            <div className="flex items-center gap-3">
-              <span className="badge-chip bg-cyan-300/15 text-cyan-100">DevTrackr</span>
-              <span className="badge-chip bg-amber-300/15 text-amber-100">
-                {user?.githubUsername ? `GitHub linked: ${user.githubUsername}` : 'GitHub not linked'}
-              </span>
-            </div>
-            <h1 className="mt-3 text-3xl font-black uppercase tracking-[0.1em] text-white md:text-4xl">
-              Mission Control
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-300">
-              Manage repositories, sync analytics, and turn engineering signals into a cinematic frontend experience.
-            </p>
-          </div>
+      <header className="dt-nav">
+        <div className="dt-nav__logo">
+          <span className="dt-logo__mark">⬡</span>
+          <span className="dt-logo__text">DevTrackr</span>
+        </div>
 
-          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-            <div className="panel-tight min-w-[220px]">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Pilot</p>
-              <p className="mt-1 text-lg font-semibold text-white">{user?.name}</p>
-              <p className="text-sm text-slate-400">{user?.email}</p>
-            </div>
-            <button className="ghost-button" type="button" onClick={handleLogout}>
-              Sign Out
+        <div className="dt-nav__tabs">
+          {tabs.map(t => (
+            <button key={t.id} className={`dt-nav__tab ${activeTab === t.id ? 'is-active' : ''}`} onClick={() => setActiveTab(t.id)}>
+              <span className="dt-nav__tab-icon">{t.icon}</span>
+              <span className="dt-nav__tab-label">{t.label}</span>
+              {activeTab === t.id && <span className="dt-nav__tab-bar" />}
             </button>
+          ))}
+        </div>
+
+        <div className="dt-nav__right">
+          <div className={`dt-nav__gh-status ${user?.githubUsername ? 'is-linked' : ''}`}>
+            <span className="dt-pulse-dot" />
+            {user?.githubUsername ? `@${user.githubUsername}` : 'Link GitHub'}
           </div>
+          <div className="dt-nav__avatar">{(user?.name || 'U')[0].toUpperCase()}</div>
+          <button className="dt-btn-eject" onClick={handleLogout}>Eject</button>
         </div>
       </header>
 
-      <main className="relative mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:px-8">
-        <aside className="panel h-fit">
-          <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/80">Navigation</p>
-          <div className="mt-5 space-y-2">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveView(item.id)}
-                className={`nav-button ${activeView === item.id ? 'nav-button-active' : ''}`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-4">
-            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">System Pulse</p>
-            <div className="mt-4 grid gap-3">
-              <StatusLine label="Tracked repos" value={String(overviewData?.overview?.totalRepos || 0)} />
-              <StatusLine label="Average health" value={`${overviewData?.overview?.avgHealthScore || 0}/100`} />
-              <StatusLine label="Average output" value={`${overviewData?.overview?.avgProductivityScore || 0}/100`} />
-            </div>
-          </div>
-        </aside>
-
-        <section className="space-y-6">
-          {appError ? <p className="status-error">{appError}</p> : null}
-          {appBusy ? (
-            <div className="panel">
-              <p className="text-sm uppercase tracking-[0.24em] text-cyan-200/70">Syncing session</p>
-              <h2 className="mt-2 text-2xl font-bold text-white">Loading your backend state...</h2>
-            </div>
-          ) : null}
-
-          {activeView === 'overview' ? (
-            <OverviewSection overviewData={overviewData} setActiveView={setActiveView} />
-          ) : null}
-
-          {activeView === 'repos' ? (
-            <RepositoriesSection
-              overviewData={overviewData}
-              trackedRepos={trackedRepos}
-              selectedRepoId={selectedRepoId}
-              setSelectedRepoId={setSelectedRepoId}
-              setActiveView={setActiveView}
-              handleSyncRepo={handleSyncRepo}
-              syncingRepoId={syncingRepoId}
-              handleUntrackRepo={handleUntrackRepo}
-              trackingRepoId={trackingRepoId}
-            />
-          ) : null}
-
-          {activeView === 'github' ? (
-            <GithubSection
-              user={user}
-              githubToken={githubToken}
-              setGithubToken={setGithubToken}
-              handleConnectGithub={handleConnectGithub}
-              githubBusy={githubBusy}
-              githubMessage={githubMessage}
-              availableBusy={availableBusy}
-              loadGithubRepos={loadGithubRepos}
-              filteredAvailableRepos={filteredAvailableRepos}
-              repoSearch={repoSearch}
-              setRepoSearch={setRepoSearch}
-              trackedRepoIds={trackedRepoIds}
-              handleTrackRepo={handleTrackRepo}
-              trackingRepoId={trackingRepoId}
-            />
-          ) : null}
-
-          {activeView === 'profile' ? (
-            <ProfileSection
-              user={user}
-              profileForm={profileForm}
-              setProfileForm={setProfileForm}
-              handleProfileUpdate={handleProfileUpdate}
-              profileBusy={profileBusy}
-              profileMessage={profileMessage}
-            />
-          ) : null}
-
-          <RepoDetailSection
-            selectedRepoMeta={selectedRepoMeta}
-            repoBundle={repoBundle}
-            handleGenerateInsights={handleGenerateInsights}
-            insightBusy={insightBusy}
-            handleSyncRepo={handleSyncRepo}
-            syncingRepoId={syncingRepoId}
-          />
-        </section>
+      <main className="dt-main">
+        {appError && <div className="dt-app-error">{appError}</div>}
+        {appBusy ? <DtLoader /> : (
+          <>
+            {activeTab === 'overview' && <OverviewTab ov={overviewData} setTab={setActiveTab} />}
+            {activeTab === 'repos' && (
+              <ReposTab
+                ov={overviewData} tracked={trackedRepos}
+                selectedId={selectedRepoId}
+                setSelectedId={(id) => { setSelectedRepoId(id); setActiveTab('detail') }}
+                setTab={setActiveTab} handleSync={handleSync} syncingId={syncingId}
+                handleUntrack={handleUntrack} trackingId={trackingId}
+              />
+            )}
+            {activeTab === 'github' && (
+              <GithubTab
+                user={user} githubToken={githubToken} setGithubToken={setGithubToken}
+                handleConnect={handleConnectGithub} githubBusy={githubBusy} githubMsg={githubMsg}
+                availableBusy={availableBusy} loadRepos={loadGithubRepos}
+                filteredRepos={filteredRepos} repoSearch={repoSearch} setRepoSearch={setRepoSearch}
+                trackedIds={trackedIds} handleTrack={handleTrack} trackingId={trackingId}
+              />
+            )}
+            {activeTab === 'detail' && (
+              <DetailTab
+                meta={selectedMeta} bundle={bundle}
+                handleInsights={handleInsights} insightBusy={insightBusy}
+                handleSync={handleSync} syncingId={syncingId}
+              />
+            )}
+            {activeTab === 'profile' && (
+              <ProfileTab
+                user={user} form={profileForm} setForm={setProfileForm}
+                handleSave={handleProfile} busy={profileBusy} msg={profileMsg}
+              />
+            )}
+          </>
+        )}
       </main>
     </div>
   )
 }
 
-function OverviewSection({ overviewData, setActiveView }) {
-  const overview = overviewData?.overview || {
-    totalRepos: 0,
-    totalCommits: 0,
-    totalPRs: 0,
-    totalIssues: 0,
-    avgProductivityScore: 0,
-    avgHealthScore: 0,
-  }
-
+/* ══════════════════════════════════════
+   OVERVIEW TAB
+══════════════════════════════════════ */
+function OverviewTab({ ov, setTab }) {
+  const o = ov?.overview || {}
+  const stats = [
+    { label: 'Repos', value: o.totalRepos || 0, color: 'pink', icon: '◈' },
+    { label: 'Commits', value: o.totalCommits || 0, color: 'cyan', icon: '◉' },
+    { label: 'Pull Requests', value: o.totalPRs || 0, color: 'violet', icon: '⬡' },
+    { label: 'Issues', value: o.totalIssues || 0, color: 'amber', icon: '◎' },
+    { label: 'Productivity', value: o.avgProductivityScore || 0, suffix: '/100', color: 'emerald', icon: '▲' },
+    { label: 'Health Score', value: o.avgHealthScore || 0, suffix: '/100', color: 'sky', icon: '◆' },
+  ]
   return (
-    <section className="space-y-6">
-      <div className="panel overflow-hidden">
-        <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle,_rgba(56,189,248,0.18),_transparent_60%)] lg:block" />
-        <div className="relative grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-          <div>
-            <span className="pill mb-4 inline-flex">Backend analyzed, frontend remixed</span>
-            <h2 className="text-3xl font-black uppercase tracking-[0.08em] text-white md:text-4xl">
-              Full-stack telemetry for your developer workflow.
-            </h2>
-            <p className="mt-4 max-w-2xl text-slate-300">
-              The backend exposes a polished repository analytics pipeline: GitHub ingestion,
-              derived metrics, dashboard aggregation, and AI-generated insights. This dashboard is designed
-              to surface those layers clearly, with smooth transitions and clear empty states.
-            </p>
-          </div>
-          <div className="rounded-[28px] border border-cyan-300/20 bg-cyan-300/10 p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/80">Ready next</p>
-            <p className="mt-3 text-lg font-semibold text-white">
-              {overview.totalRepos === 0
-                ? 'Connect GitHub, fetch repos, then start tracking.'
-                : 'Pick a tracked repo below to drill into metrics and AI insights.'}
-            </p>
-            <button className="primary-button mt-5" type="button" onClick={() => setActiveView('github')}>
-              Open GitHub Link
-            </button>
-          </div>
+    <div className="dt-tab-body">
+      <div className="dt-hero">
+        <div className="dt-hero__glow" />
+        <span className="dt-eyebrow">MISSION CONTROL</span>
+        <h2 className="dt-hero__title">What's happening<br /><span className="dt-hero__accent">in your codebase?</span></h2>
+        <p className="dt-hero__desc">Real-time GitHub analytics, AI-powered sprint summaries, and contributor intelligence.</p>
+        <div className="dt-hero__btns">
+          <button className="dt-btn-primary" onClick={() => setTab('github')}>⬡ Connect GitHub</button>
+          <button className="dt-btn-ghost" onClick={() => setTab('repos')}>View Repos →</button>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Tracked Repositories" value={overview.totalRepos} tone="cyan" />
-        <StatCard label="Total Commits" value={overview.totalCommits} tone="amber" />
-        <StatCard label="Pull Requests" value={overview.totalPRs} tone="pink" />
-        <StatCard label="Issues" value={overview.totalIssues} tone="violet" />
-        <StatCard label="Avg Productivity" value={`${overview.avgProductivityScore}/100`} tone="emerald" />
-        <StatCard label="Avg Health" value={`${overview.avgHealthScore}/100`} tone="sky" />
+      <div className="dt-stat-grid">
+        {stats.map(s => <StatCard key={s.label} {...s} />)}
       </div>
-    </section>
+
+      {ov?.repos?.length > 0 && (
+        <div className="dt-glass">
+          <div className="dt-section-hd">
+            <span className="dt-section-title">Tracked Fleet</span>
+            <button className="dt-btn-link" onClick={() => setTab('repos')}>See all →</button>
+          </div>
+          <div className="dt-fleet-list">
+            {ov.repos.slice(0, 4).map(r => (
+              <div key={r.id || r._id} className="dt-fleet-row" onClick={() => setTab('repos')}>
+                <div className="dt-fleet-row__lang">{r.language || '?'}</div>
+                <div className="dt-fleet-row__name">{r.name}</div>
+                <div className="dt-fleet-row__meta">{r.fullName}</div>
+                <div className="dt-fleet-row__health">
+                  <span className="dt-health-num">{r.metrics?.healthScore || 0}</span>
+                  <span className="dt-health-label">health</span>
+                </div>
+                <HealthBar val={r.metrics?.healthScore || 0} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
-function RepositoriesSection({
-  overviewData,
-  trackedRepos,
-  selectedRepoId,
-  setSelectedRepoId,
-  setActiveView,
-  handleSyncRepo,
-  syncingRepoId,
-  handleUntrackRepo,
-  trackingRepoId,
-}) {
-  const repos = overviewData?.repos || trackedRepos
-
+function StatCard({ label, value, suffix = '', color, icon }) {
+  const n = useCountUp(value)
   return (
-    <section className="panel">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className={`dt-stat dt-stat--${color}`}>
+      <span className="dt-stat__icon">{icon}</span>
+      <span className="dt-stat__num">{n}{suffix}</span>
+      <span className="dt-stat__label">{label}</span>
+      <div className="dt-stat__glow" />
+    </div>
+  )
+}
+
+function HealthBar({ val }) {
+  const [w, setW] = useState(0)
+  useEffect(() => { setTimeout(() => setW(val), 100) }, [val])
+  const color = val > 70 ? '#22d3ee' : val > 40 ? '#fbbf24' : '#f87171'
+  return (
+    <div style={{ flex: '0 0 80px', height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{ width: `${w}%`, height: '100%', background: color, transition: 'width 0.8s ease', borderRadius: 2 }} />
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════
+   REPOS TAB
+══════════════════════════════════════ */
+function ReposTab({ ov, tracked, selectedId, setSelectedId, setTab, handleSync, syncingId, handleUntrack, trackingId }) {
+  const repos = ov?.repos?.length ? ov.repos : tracked
+  return (
+    <div className="dt-tab-body">
+      <div className="dt-tab-hd">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Tracked Fleet</p>
-          <h2 className="mt-2 text-3xl font-black uppercase tracking-[0.08em] text-white">
-            Repo Hangar
-          </h2>
+          <span className="dt-eyebrow">YOUR FLEET</span>
+          <h2 className="dt-tab-title">Repo Hangar</h2>
         </div>
-        <button className="ghost-button" type="button" onClick={() => setActiveView('github')}>
-          Add More Repositories
-        </button>
+        <button className="dt-btn-primary" onClick={() => setTab('github')}>+ Add Repos</button>
       </div>
 
       {repos.length === 0 ? (
-        <EmptyState
-          title="No repositories tracked yet"
-          description="Your backend is ready for it. Link GitHub, fetch your repos, and choose a project to monitor."
-        />
+        <DtEmpty icon="◈" title="No repos tracked yet" sub="Head to GitHub tab → connect token → fetch & track repos." />
       ) : (
-        <div className="mt-6 grid gap-4 xl:grid-cols-2">
-          {repos.map((repo) => {
-            const repoId = String(repo.id || repo._id)
-            const metrics = repo.metrics || {}
-            const active = repoId === String(selectedRepoId)
-
+        <div className="dt-repo-grid">
+          {repos.map(repo => {
+            const id = String(repo.id || repo._id)
+            const m = repo.metrics || {}
+            const isActive = id === String(selectedId)
             return (
-              <article
-                key={repoId}
-                className={`rounded-[30px] border p-5 transition duration-300 ${active ? 'border-cyan-300/60 bg-cyan-300/10 shadow-[0_0_0_1px_rgba(103,232,249,0.25)]' : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/8'}`}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="badge-chip bg-white/10 text-slate-200">{repo.language || 'Unknown'}</span>
-                      <span className="badge-chip bg-white/10 text-slate-300">{repo.fullName || repo.name}</span>
+              <div key={id} className={`dt-repo-card ${isActive ? 'is-active' : ''}`}>
+                <div className="dt-repo-card__shine" />
+                <div className="dt-repo-card__top">
+                  <span className="dt-repo-card__lang">{repo.language || '?'}</span>
+                  <div className="dt-repo-card__actions">
+                    <button className="dt-btn-sm dt-btn-sm--primary" onClick={() => setSelectedId(id)}>Analyze</button>
+                    <button className="dt-btn-sm" onClick={() => handleSync(id)} disabled={syncingId === id} title="Sync">
+                      <span className={syncingId === id ? 'dt-spin' : ''}>↻</span>
+                    </button>
+                    {'_id' in repo && (
+                      <button className="dt-btn-sm dt-btn-sm--danger" onClick={() => handleUntrack(repo._id)} disabled={trackingId === String(repo._id)} title="Untrack">✕</button>
+                    )}
+                  </div>
+                </div>
+                <h3 className="dt-repo-card__name">{repo.name}</h3>
+                <p className="dt-repo-card__full">{repo.fullName}</p>
+                <div className="dt-repo-card__metrics">
+                  {[
+                    { label: 'Commits', val: m.totalCommits || 0 },
+                    { label: 'PRs', val: m.totalPRs || 0 },
+                    { label: 'Issues', val: m.openIssues || 0 },
+                    { label: 'Health', val: m.healthScore || 0, accent: true },
+                  ].map(({ label, val, accent }) => (
+                    <div key={label} className={`dt-metric ${accent ? 'dt-metric--accent' : ''}`}>
+                      <span className="dt-metric__val">{val}</span>
+                      <span className="dt-metric__label">{label}</span>
                     </div>
-                    <h3 className="mt-4 text-2xl font-bold text-white">{repo.name}</h3>
-                    <p className="mt-2 text-sm text-slate-400">
-                      Last synced {formatRelativeDate(repo.lastSynced)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => {
-                        setSelectedRepoId(repoId)
-                        setActiveView('overview')
-                      }}
-                    >
-                      Inspect
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => handleSyncRepo(repoId)}
-                      disabled={syncingRepoId === repoId}
-                    >
-                      {syncingRepoId === repoId ? 'Syncing...' : 'Sync'}
-                    </button>
-                    {'_id' in repo ? (
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => handleUntrackRepo(repo._id)}
-                        disabled={trackingRepoId === String(repo._id)}
-                      >
-                        {trackingRepoId === String(repo._id) ? 'Working...' : 'Untrack'}
-                      </button>
-                    ) : null}
-                  </div>
+                  ))}
                 </div>
-
-                <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  <MiniStat label="Commits" value={metrics.totalCommits || 0} />
-                  <MiniStat label="PRs" value={metrics.totalPRs || 0} />
-                  <MiniStat label="Open Issues" value={metrics.openIssues || 0} />
-                  <MiniStat label="Health" value={`${metrics.healthScore || 0}`} />
-                </div>
-              </article>
+                <p className="dt-repo-card__sync">Synced {relDate(repo.lastSynced)}</p>
+              </div>
             )
           })}
         </div>
       )}
-    </section>
+    </div>
   )
 }
 
-function GithubSection({
-  user,
-  githubToken,
-  setGithubToken,
-  handleConnectGithub,
-  githubBusy,
-  githubMessage,
-  availableBusy,
-  loadGithubRepos,
-  filteredAvailableRepos,
-  repoSearch,
-  setRepoSearch,
-  trackedRepoIds,
-  handleTrackRepo,
-  trackingRepoId,
-}) {
+/* ══════════════════════════════════════
+   GITHUB TAB
+══════════════════════════════════════ */
+function GithubTab({ user, githubToken, setGithubToken, handleConnect, githubBusy, githubMsg, availableBusy, loadRepos, filteredRepos, repoSearch, setRepoSearch, trackedIds, handleTrack, trackingId }) {
   return (
-    <section className="space-y-6">
-      <div className="panel">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-2xl">
-            <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Integration Gateway</p>
-            <h2 className="mt-2 text-3xl font-black uppercase tracking-[0.08em] text-white">
-              GitHub Link
-            </h2>
-            <p className="mt-4 text-slate-300">
-              The backend expects a GitHub personal access token, validates it against the GitHub API,
-              and stores your GitHub identity on the user record. Once linked, you can fetch repositories and track them individually.
-            </p>
-          </div>
-
-          <div className="rounded-[28px] border border-white/10 bg-white/5 px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Connection State</p>
-            <p className="mt-2 text-lg font-semibold text-white">
-              {user?.githubUsername ? `Linked as ${user.githubUsername}` : 'Not linked yet'}
-            </p>
-          </div>
+    <div className="dt-tab-body">
+      <div className="dt-tab-hd">
+        <div>
+          <span className="dt-eyebrow">INTEGRATION</span>
+          <h2 className="dt-tab-title">GitHub Link</h2>
         </div>
-
-        <form className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleConnectGithub}>
-          <label className="field">
-            <span>GitHub personal access token</span>
-            <input
-              value={githubToken}
-              onChange={(event) => setGithubToken(event.target.value)}
-              placeholder="ghp_xxxxxxxxxxxxxxxxx"
-              required
-            />
-          </label>
-          <button className="primary-button self-end" type="submit" disabled={githubBusy}>
-            {githubBusy ? 'Linking...' : 'Connect GitHub'}
-          </button>
-        </form>
-
-        {githubMessage ? <p className="mt-4 status-info">{githubMessage}</p> : null}
+        <div className={`dt-gh-badge ${user?.githubUsername ? 'is-linked' : ''}`}>
+          <span className="dt-pulse-dot" />
+          {user?.githubUsername ? `Linked as @${user.githubUsername}` : 'Not linked'}
+        </div>
       </div>
 
-      <div className="panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Repository Discovery</p>
-            <h3 className="mt-2 text-2xl font-bold text-white">Fetch available repositories</h3>
-          </div>
+      <div className="dt-glass">
+        <h3 className="dt-glass__title">Connect Personal Access Token</h3>
+        <p className="dt-glass__desc">Provide a GitHub PAT (repo scope) to start tracking repositories and syncing analytics.</p>
+        <form className="dt-token-form" onSubmit={handleConnect}>
+          <input className="dt-input dt-input--mono" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" required />
+          <button className="dt-btn-primary" type="submit" disabled={githubBusy}>{githubBusy ? <><span className="dt-spinner" /> Connecting…</> : 'Connect →'}</button>
+        </form>
+        {githubMsg && <div className={`dt-flash ${/fail|error|unable/i.test(githubMsg) ? 'dt-flash--err' : 'dt-flash--ok'}`}>{githubMsg}</div>}
+      </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <label className="field min-w-[240px]">
-              <span>Search repos</span>
-              <input
-                value={repoSearch}
-                onChange={(event) => setRepoSearch(event.target.value)}
-                placeholder="Search by name or language"
-              />
-            </label>
-            <button className="secondary-button self-end" type="button" onClick={loadGithubRepos} disabled={availableBusy}>
-              {availableBusy ? 'Loading...' : 'Fetch Repositories'}
-            </button>
+      <div className="dt-glass">
+        <div className="dt-section-hd">
+          <span className="dt-section-title">Available Repositories</span>
+          <div className="dt-section-hd__actions">
+            <input className="dt-input dt-input--sm" placeholder="Search repos…" value={repoSearch} onChange={e => setRepoSearch(e.target.value)} />
+            <button className="dt-btn-ghost" onClick={loadRepos} disabled={availableBusy}>{availableBusy ? <><span className="dt-spinner" /> Loading…</> : '↓ Fetch Repos'}</button>
           </div>
         </div>
 
-        {filteredAvailableRepos.length === 0 ? (
-          <EmptyState
-            title="No repositories loaded yet"
-            description="Fetch your GitHub repos after linking your token. They will appear here with one-click tracking."
-          />
+        {filteredRepos.length === 0 ? (
+          <DtEmpty icon="◉" title="No repositories fetched" sub="Connect your GitHub token above then click 'Fetch Repos'." />
         ) : (
-          <div className="mt-6 grid gap-4 xl:grid-cols-2">
-            {filteredAvailableRepos.map((repo) => {
-              const isTracked = trackedRepoIds.has(String(repo.githubId))
-              const busy = trackingRepoId === String(repo.githubId)
-
+          <div className="dt-gh-list">
+            {filteredRepos.map(repo => {
+              const tracked = trackedIds.has(String(repo.githubId))
+              const busy = trackingId === String(repo.githubId)
               return (
-                <article key={repo.githubId} className="rounded-[28px] border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="badge-chip bg-white/10 text-slate-200">{repo.language}</span>
-                        <span className="badge-chip bg-white/10 text-slate-300">
-                          {repo.isPrivate ? 'Private' : 'Public'}
-                        </span>
-                      </div>
-                      <h4 className="mt-4 text-xl font-bold text-white">{repo.fullName}</h4>
-                      <p className="mt-2 text-sm text-slate-400">{repo.description || 'No description provided.'}</p>
+                <div key={repo.githubId} className="dt-gh-item">
+                  <div className="dt-gh-item__info">
+                    <div className="dt-gh-item__name">{repo.fullName}</div>
+                    <div className="dt-gh-item__tags">
+                      <span className="dt-tag">{repo.language || 'Unknown'}</span>
+                      <span className={`dt-tag ${repo.isPrivate ? 'dt-tag--amber' : 'dt-tag--emerald'}`}>{repo.isPrivate ? 'Private' : 'Public'}</span>
+                    </div>
+                    <p className="dt-gh-item__desc">{repo.description || 'No description provided.'}</p>
+                  </div>
+                  <div className="dt-gh-item__right">
+                    <div className="dt-gh-item__stats">
+                      <span>★ {repo.stars}</span>
+                      <span>⑂ {repo.forks}</span>
                     </div>
                     <button
-                      className={isTracked ? 'ghost-button' : 'primary-button'}
-                      type="button"
-                      disabled={isTracked || busy}
-                      onClick={() => handleTrackRepo(repo)}
-                    >
-                      {busy ? 'Tracking...' : isTracked ? 'Tracked' : 'Track Repo'}
-                    </button>
+                      className={tracked ? 'dt-btn-tracked' : 'dt-btn-primary dt-btn-sm--primary'}
+                      disabled={tracked || busy}
+                      onClick={() => handleTrack(repo)}
+                    >{busy ? <span className="dt-spinner" /> : tracked ? '✓ Tracked' : '+ Track'}</button>
                   </div>
-
-                  <div className="mt-6 grid grid-cols-4 gap-3">
-                    <MiniStat label="Stars" value={repo.stars} />
-                    <MiniStat label="Forks" value={repo.forks} />
-                    <MiniStat label="Issues" value={repo.openIssues} />
-                    <MiniStat label="Branch" value={repo.defaultBranch} />
-                  </div>
-                </article>
+                </div>
               )
             })}
           </div>
         )}
       </div>
-    </section>
+    </div>
   )
 }
 
-function ProfileSection({
-  user,
-  profileForm,
-  setProfileForm,
-  handleProfileUpdate,
-  profileBusy,
-  profileMessage,
-}) {
+/* ══════════════════════════════════════
+   DETAIL / ANALYTICS TAB
+══════════════════════════════════════ */
+function DetailTab({ meta, bundle, handleInsights, insightBusy, handleSync, syncingId }) {
+  const repo = bundle.dashboard?.repository || meta
   return (
-    <section className="grid gap-6 xl:grid-cols-[1fr_320px]">
-      <div className="panel">
-        <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Identity Module</p>
-        <h2 className="mt-2 text-3xl font-black uppercase tracking-[0.08em] text-white">
-          Pilot Profile
-        </h2>
-        <form className="mt-8 space-y-4" onSubmit={handleProfileUpdate}>
-          <label className="field">
-            <span>Name</span>
-            <input
-              value={profileForm.name}
-              onChange={(event) => setProfileForm({ name: event.target.value })}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>Email</span>
-            <input value={user?.email || ''} disabled />
-          </label>
-          <button className="primary-button" type="submit" disabled={profileBusy}>
-            {profileBusy ? 'Updating...' : 'Save Profile'}
-          </button>
-          {profileMessage ? <p className="status-info">{profileMessage}</p> : null}
-        </form>
-      </div>
-
-      <div className="panel">
-        <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Account Stats</p>
-        <div className="mt-6 space-y-4">
-          <MiniStat label="Plan" value={user?.plan || 'free'} large />
-          <MiniStat label="GitHub" value={user?.githubUsername || 'Not linked'} large />
-          <MiniStat label="Last Active" value={formatRelativeDate(user?.lastActive)} large />
+    <div className="dt-tab-body">
+      <div className="dt-tab-hd dt-tab-hd--wrap">
+        <div>
+          <span className="dt-eyebrow">ANALYTICS</span>
+          <h2 className="dt-tab-title">{repo ? repo.name : 'Analytics'}</h2>
+          {repo && <p className="dt-tab-sub">{repo.fullName} · {repo.language || 'Unknown'}</p>}
         </div>
-      </div>
-    </section>
-  )
-}
-
-function RepoDetailSection({
-  selectedRepoMeta,
-  repoBundle,
-  handleGenerateInsights,
-  insightBusy,
-  handleSyncRepo,
-  syncingRepoId,
-}) {
-  const repo = repoBundle.dashboard?.repository || selectedRepoMeta
-
-  return (
-    <section className="space-y-6">
-      <div className="panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Deep Dive</p>
-            <h2 className="mt-2 text-3xl font-black uppercase tracking-[0.08em] text-white">
-              Repository Detail
-            </h2>
-            <p className="mt-3 text-slate-300">
-              This section is powered by `/dashboard/repo/:repoId`, plus the detailed analytics and AI insight endpoints.
-            </p>
+        {repo && (
+          <div className="dt-detail-actions">
+            <button className="dt-btn-ghost dt-btn-sm--ghost" onClick={() => handleSync(repo.id || repo._id)} disabled={syncingId === String(repo.id || repo._id)}>
+              <span className={syncingId === String(repo.id || repo._id) ? 'dt-spin' : ''}>↻</span>
+              {syncingId === String(repo.id || repo._id) ? ' Syncing…' : ' Sync'}
+            </button>
+            <button className="dt-btn-primary dt-btn-sm--primary" onClick={() => handleInsights(false)} disabled={insightBusy}>
+              {insightBusy ? <><span className="dt-spinner" /> Generating…</> : '✦ AI Insights'}
+            </button>
+            <button className="dt-btn-ghost dt-btn-sm--ghost" onClick={() => handleInsights(true)} disabled={insightBusy}>↺ Refresh</button>
           </div>
-
-          {repo ? (
-            <div className="flex flex-wrap gap-3">
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => handleSyncRepo(repo.id || repo._id)}
-                disabled={syncingRepoId === String(repo.id || repo._id)}
-              >
-                {syncingRepoId === String(repo.id || repo._id) ? 'Syncing...' : 'Sync Repository'}
-              </button>
-              <button className="primary-button" type="button" onClick={() => handleGenerateInsights(false)} disabled={insightBusy}>
-                {insightBusy ? 'Generating...' : 'Generate AI Insights'}
-              </button>
-            </div>
-          ) : null}
-        </div>
+        )}
       </div>
 
-      {!repo ? (
-        <EmptyState
-          title="Choose a repository"
-          description="Pick a tracked repo from the Repo Hangar and this area will fill with metrics, charts, contributors, and AI recommendations."
-        />
-      ) : null}
+      {!repo && !bundle.loading && <DtEmpty icon="▲" title="No repo selected" sub="Go to Repos tab → click Analyze on any repository." />}
+      {bundle.loading && <DtLoader />}
+      {bundle.error && <DtError msg={bundle.error} />}
 
-      {repoBundle.loading ? (
-        <div className="panel">
-          <p className="text-lg font-semibold text-white">Loading repository analytics...</p>
-        </div>
-      ) : null}
-
-      {repoBundle.error ? (
-        <div className="panel border border-amber-300/30 bg-amber-300/10">
-          <p className="text-sm uppercase tracking-[0.22em] text-amber-100/80">Repository status</p>
-          <p className="mt-3 text-lg font-semibold text-white">{repoBundle.error}</p>
-          <p className="mt-2 text-sm text-slate-200">
-            If this repo is newly tracked, run a sync first so the backend can populate analytics documents.
-          </p>
-        </div>
-      ) : null}
-
-      {repoBundle.dashboard ? (
+      {bundle.dashboard && (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Productivity Score" value={`${repoBundle.dashboard.metrics?.productivityScore || 0}/100`} tone="cyan" />
-            <StatCard label="Health Score" value={`${repoBundle.dashboard.metrics?.healthScore || 0}/100`} tone="amber" />
-            <StatCard label="Open PRs" value={repoBundle.dashboard.metrics?.openPRCount || 0} tone="pink" />
-            <StatCard label="Open Issues" value={repoBundle.dashboard.metrics?.openIssueCount || 0} tone="violet" />
+          {/* Score row */}
+          <div className="dt-score-row">
+            {[
+              { label: 'Productivity', value: bundle.dashboard.metrics?.productivityScore || 0, max: 100, color: 'cyan' },
+              { label: 'Health Score', value: bundle.dashboard.metrics?.healthScore || 0, max: 100, color: 'emerald' },
+              { label: 'Open PRs', value: bundle.dashboard.metrics?.openPRCount || 0, color: 'pink' },
+              { label: 'Open Issues', value: bundle.dashboard.metrics?.openIssueCount || 0, color: 'amber' },
+            ].map(s => <ScoreCard key={s.label} {...s} />)}
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="panel">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Activity Arc</p>
-                  <h3 className="mt-2 text-2xl font-bold text-white">{repo.fullName || repo.name}</h3>
-                  <p className="mt-2 text-sm text-slate-400">{repo.description || 'No description available.'}</p>
-                </div>
-                <div className="text-right text-sm text-slate-400">
-                  <p>Updated {formatRelativeDate(repo.lastSynced)}</p>
-                  <p className="mt-1">{repo.language || 'Unknown'} stack</p>
-                </div>
-              </div>
-
-              <div className="mt-8">
-                <h4 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Commit trend</h4>
-                <BarTrend items={repoBundle.dashboard.commitTrend || []} itemKey="date" valueKey="count" />
-              </div>
-
-              <div className="mt-8">
-                <h4 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Contribution heatmap</h4>
-                <HeatmapGrid items={repoBundle.dashboard.heatmapData || []} />
-              </div>
+          {/* Charts row */}
+          <div className="dt-two-col">
+            <div className="dt-glass">
+              <h3 className="dt-glass__title">Commit Trend</h3>
+              <BarChart data={bundle.dashboard.commitTrend || []} />
+              <h3 className="dt-glass__title" style={{ marginTop: '1.5rem' }}>Contribution Heatmap</h3>
+              <Heatmap data={bundle.dashboard.heatmapData || []} />
             </div>
-
-            <div className="panel">
-              <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Top Contributors</p>
-              <div className="mt-6 space-y-4">
-                {(repoBundle.dashboard.topContributors || []).length === 0 ? (
-                  <p className="text-sm text-slate-400">No contributor analytics yet.</p>
-                ) : (
-                  repoBundle.dashboard.topContributors.map((contributor) => (
-                    <div key={contributor.login} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-lg font-semibold text-white">{contributor.login}</p>
-                          <p className="text-sm text-slate-400">
-                            {contributor.isInactive ? 'Inactive for 14+ days' : 'Recently active'}
-                          </p>
-                        </div>
-                        <span className="badge-chip bg-cyan-300/15 text-cyan-100">
-                          {contributor.totalCommits} commits
-                        </span>
-                      </div>
+            <div className="dt-glass">
+              <h3 className="dt-glass__title">Top Contributors</h3>
+              {(bundle.dashboard.topContributors || []).length === 0
+                ? <p className="dt-muted">No contributor data yet. Sync the repository first.</p>
+                : (bundle.dashboard.topContributors).map((c, i) => (
+                  <div key={c.login} className="dt-contrib-row">
+                    <span className="dt-contrib-row__rank">#{i + 1}</span>
+                    <div className="dt-contrib-row__info">
+                      <span className="dt-contrib-row__login">{c.login}</span>
+                      <span className={`dt-contrib-row__status ${c.isInactive ? 'is-inactive' : 'is-active'}`}>
+                        {c.isInactive ? '● Inactive' : '● Active'}
+                      </span>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-3">
-            <div className="panel xl:col-span-2">
-              <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Activity Feed</p>
-              <div className="mt-6 space-y-4">
-                {(repoBundle.dashboard.activityFeed || []).map((item, index) => (
-                  <div key={`${item.type}-${index}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="badge-chip bg-white/10 text-slate-200">{item.type.toUpperCase()}</span>
-                      <span className="text-sm text-slate-400">{formatRelativeDate(item.date)}</span>
-                    </div>
-                    <p className="mt-3 text-white">
-                      {item.message || item.title || `#${item.number || item.sha}`}
-                    </p>
-                    <p className="mt-2 text-sm text-slate-400">by {item.author || 'Unknown author'}</p>
+                    <span className="dt-contrib-row__commits">{c.totalCommits}</span>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel">
-              <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">Weekly Pulse</p>
-              <BarTrend items={repoBundle.dashboard.weeklyActivity || []} itemKey="week" valueKey="commits" compact />
+                ))
+              }
             </div>
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-2">
-            <InsightPanel
-              title="Sprint Summary"
-              content={repoBundle.insights?.sprintSummary || repoBundle.dashboard.insights?.sprintSummary}
-            />
-            <InsightPanel
-              title="Productivity Insights"
-              content={repoBundle.insights?.productivityInsights || repoBundle.dashboard.insights?.productivityInsights}
-            />
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-3">
-            <ListPanel
-              title="Recommendations"
-              items={repoBundle.insights?.recommendations || repoBundle.dashboard.insights?.recommendations || []}
-              renderItem={(item) => (
-                <div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="badge-chip bg-emerald-300/15 text-emerald-100">{item.priority || 'medium'}</span>
-                    <span className="badge-chip bg-white/10 text-slate-200">{item.category || 'process'}</span>
+          {/* Activity feed */}
+          <div className="dt-glass">
+            <h3 className="dt-glass__title">Activity Feed</h3>
+            {(bundle.dashboard.activityFeed || []).length === 0
+              ? <p className="dt-muted">No recent activity found.</p>
+              : (bundle.dashboard.activityFeed).map((item, i) => (
+                <div key={i} className="dt-feed-item">
+                  <span className={`dt-feed-type dt-feed-type--${(item.type || 'event').toLowerCase()}`}>{item.type?.toUpperCase() || 'EVENT'}</span>
+                  <div className="dt-feed-item__body">
+                    <p className="dt-feed-item__msg">{item.message || item.title || `#${item.number || item.sha}`}</p>
+                    <p className="dt-feed-item__meta">by {item.author || 'Unknown'} · {relDate(item.date)}</p>
                   </div>
-                  <p className="mt-3 font-semibold text-white">{item.title}</p>
-                  <p className="mt-2 text-sm text-slate-300">{item.description}</p>
                 </div>
+              ))
+            }
+          </div>
+
+          {/* AI Insights */}
+          <div className="dt-two-col">
+            <AIPanel title="Sprint Summary" content={bundle.insights?.sprintSummary || bundle.dashboard.insights?.sprintSummary} onGenerate={() => handleInsights(false)} busy={insightBusy} />
+            <AIPanel title="Productivity Insights" content={bundle.insights?.productivityInsights || bundle.dashboard.insights?.productivityInsights} onGenerate={() => handleInsights(false)} busy={insightBusy} />
+          </div>
+
+          {/* Recommendations / Bottlenecks / Risks */}
+          <div className="dt-three-col">
+            <InsightList
+              title="Recommendations" icon="◈"
+              items={bundle.insights?.recommendations || bundle.dashboard.insights?.recommendations || []}
+              render={item => (
+                <>
+                  <div className="dt-il-tags">
+                    <span className={`dt-tag dt-tag--priority-${(item.priority || 'medium').toLowerCase()}`}>{item.priority || 'medium'}</span>
+                    <span className="dt-tag">{item.category || 'process'}</span>
+                  </div>
+                  <p className="dt-il-title">{item.title}</p>
+                  <p className="dt-il-desc">{item.description}</p>
+                </>
               )}
             />
-            <ListPanel
-              title="Bottlenecks"
-              items={repoBundle.insights?.bottlenecks || repoBundle.dashboard.insights?.bottlenecks || []}
-              renderItem={(item) => (
-                <div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="badge-chip bg-amber-300/15 text-amber-100">{item.severity || 'low'}</span>
-                    <span className="badge-chip bg-white/10 text-slate-200">{item.affectedArea || 'Workflow'}</span>
+            <InsightList
+              title="Bottlenecks" icon="⚠"
+              items={bundle.insights?.bottlenecks || bundle.dashboard.insights?.bottlenecks || []}
+              render={item => (
+                <>
+                  <div className="dt-il-tags">
+                    <span className={`dt-tag dt-tag--sev-${(item.severity || 'low').toLowerCase()}`}>{item.severity || 'low'}</span>
+                    <span className="dt-tag">{item.affectedArea || 'workflow'}</span>
                   </div>
-                  <p className="mt-3 font-semibold text-white">{item.type || 'Process bottleneck'}</p>
-                  <p className="mt-2 text-sm text-slate-300">{item.description}</p>
-                  <p className="mt-2 text-sm text-cyan-100">{item.suggestion}</p>
-                </div>
+                  <p className="dt-il-title">{item.type || 'Bottleneck'}</p>
+                  <p className="dt-il-desc">{item.description}</p>
+                  {item.suggestion && <p className="dt-il-hint">→ {item.suggestion}</p>}
+                </>
               )}
             />
-            <ListPanel
-              title="Risk Analysis"
-              items={repoBundle.insights?.riskAnalysis?.risks || repoBundle.dashboard.insights?.riskAnalysis?.risks || []}
-              emptyText="Generate AI insights to see structured risk analysis."
-              renderItem={(item) => (
-                <div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="badge-chip bg-rose-300/15 text-rose-100">{item.level || 'low'}</span>
-                    <span className="badge-chip bg-white/10 text-slate-200">{item.area || 'General'}</span>
+            <InsightList
+              title="Risk Analysis" icon="◆"
+              emptyTxt="Click '✦ AI Insights' to generate risk analysis."
+              items={bundle.insights?.riskAnalysis?.risks || bundle.dashboard.insights?.riskAnalysis?.risks || []}
+              render={item => (
+                <>
+                  <div className="dt-il-tags">
+                    <span className={`dt-tag dt-tag--risk-${(item.level || 'low').toLowerCase()}`}>{item.level || 'low'}</span>
+                    <span className="dt-tag">{item.area || 'general'}</span>
                   </div>
-                  <p className="mt-3 text-sm text-slate-300">{item.description}</p>
-                </div>
+                  <p className="dt-il-desc">{item.description}</p>
+                </>
               )}
             />
           </div>
         </>
-      ) : null}
-    </section>
-  )
-}
-
-function FeatureCard({ title, value, description }) {
-  return (
-    <article className="rounded-[30px] border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
-      <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">{title}</p>
-      <h3 className="mt-3 text-2xl font-black uppercase tracking-[0.06em] text-white">{value}</h3>
-      <p className="mt-3 text-sm text-slate-300">{description}</p>
-    </article>
-  )
-}
-
-function StatCard({ label, value, tone = 'cyan' }) {
-  const toneMap = {
-    cyan: 'from-cyan-300/20 to-sky-400/5 border-cyan-300/20',
-    amber: 'from-amber-300/20 to-orange-400/5 border-amber-300/20',
-    pink: 'from-pink-300/20 to-rose-400/5 border-pink-300/20',
-    violet: 'from-violet-300/20 to-fuchsia-400/5 border-violet-300/20',
-    emerald: 'from-emerald-300/20 to-lime-400/5 border-emerald-300/20',
-    sky: 'from-sky-300/20 to-cyan-400/5 border-sky-300/20',
-  }
-
-  return (
-    <article className={`rounded-[30px] border bg-gradient-to-br p-5 ${toneMap[tone] || toneMap.cyan}`}>
-      <p className="text-xs uppercase tracking-[0.24em] text-slate-300">{label}</p>
-      <p className="mt-4 text-4xl font-black uppercase tracking-[0.05em] text-white">{value}</p>
-    </article>
-  )
-}
-
-function MiniStat({ label, value, large = false }) {
-  return (
-    <div className="rounded-[22px] border border-white/10 bg-slate-950/35 p-3">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">{label}</p>
-      <p className={`mt-2 font-semibold text-white ${large ? 'text-lg' : 'text-base'}`}>{value}</p>
+      )}
     </div>
   )
 }
 
-function StatusLine({ label, value }) {
+function ScoreCard({ label, value, max, color }) {
+  const n = useCountUp(value)
+  const [barW, setBarW] = useState(0)
+  const pct = max ? Math.min(100, (value / max) * 100) : null
+  useEffect(() => { if (pct !== null) setTimeout(() => setBarW(pct), 200) }, [pct])
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-slate-400">{label}</span>
-      <span className="font-medium text-white">{value}</span>
+    <div className={`dt-score-card dt-score-card--${color}`}>
+      <span className="dt-score-card__label">{label}</span>
+      <span className="dt-score-card__val">{n}{max ? <span className="dt-score-card__max">/{max}</span> : null}</span>
+      {pct !== null && (
+        <div className="dt-score-card__track">
+          <div className="dt-score-card__fill" style={{ width: `${barW}%` }} />
+        </div>
+      )}
     </div>
   )
 }
 
-function BarTrend({ items, itemKey, valueKey, compact = false }) {
-  const safeItems = items.slice(-12)
-  const max = Math.max(...safeItems.map((item) => item[valueKey] || 0), 1)
-
-  if (!safeItems.length) {
-    return <p className="mt-4 text-sm text-slate-400">No chart data available yet.</p>
-  }
-
+function BarChart({ data }) {
+  const safe = data.slice(-12)
+  const max = Math.max(...safe.map(d => d.count || 0), 1)
+  if (!safe.length) return <p className="dt-muted">No chart data available yet. Sync the repo.</p>
   return (
-    <div className={`mt-4 grid gap-3 ${compact ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-2 md:grid-cols-4 xl:grid-cols-6'}`}>
-      {safeItems.map((item) => {
-        const value = item[valueKey] || 0
-        const height = `${Math.max(12, Math.round((value / max) * 100))}%`
-
+    <div className="dt-bar-chart">
+      {safe.map((d, i) => {
+        const h = Math.max(6, ((d.count || 0) / max) * 100)
         return (
-          <div key={`${item[itemKey]}-${value}`} className="rounded-[22px] border border-white/10 bg-white/5 p-3">
-            <div className={`flex h-${compact ? '[100px]' : '[140px]'} items-end`}>
-              <div
-                className="w-full rounded-t-[18px] bg-gradient-to-t from-cyan-400 via-sky-300 to-amber-200 shadow-[0_0_18px_rgba(125,211,252,0.35)]"
-                style={{ height }}
-              />
+          <div key={i} className="dt-bar-col">
+            <span className="dt-bar-col__val">{d.count || 0}</span>
+            <div className="dt-bar-col__track">
+              <div className="dt-bar-col__fill" style={{ height: `${h}%` }} title={`${d.date}: ${d.count}`} />
             </div>
-            <p className="mt-3 truncate text-xs uppercase tracking-[0.16em] text-slate-400">{item[itemKey]}</p>
-            <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+            <span className="dt-bar-col__label">{String(d.date || '').slice(0, 5)}</span>
           </div>
         )
       })}
@@ -1315,93 +789,150 @@ function BarTrend({ items, itemKey, valueKey, compact = false }) {
   )
 }
 
-function HeatmapGrid({ items }) {
-  if (!items.length) {
-    return <p className="mt-4 text-sm text-slate-400">No heatmap data available yet.</p>
-  }
-
+function Heatmap({ data }) {
+  if (!data.length) return <p className="dt-muted">No heatmap data yet.</p>
   return (
-    <div className="mt-4 grid grid-cols-10 gap-2 md:grid-cols-15 xl:grid-cols-20">
-      {items.slice(-120).map((item) => {
-        const tone =
-          item.count > 8 ? 'bg-cyan-200' : item.count > 4 ? 'bg-cyan-300/80' : item.count > 1 ? 'bg-cyan-500/55' : 'bg-slate-700'
-
-        return (
-          <div
-            key={item.date}
-            className={`aspect-square rounded-md border border-white/5 ${tone}`}
-            title={`${item.date}: ${item.count} commits`}
-          />
-        )
+    <div className="dt-heatmap">
+      {data.slice(-140).map((d, i) => {
+        const lvl = d.count > 8 ? 4 : d.count > 4 ? 3 : d.count > 1 ? 2 : d.count > 0 ? 1 : 0
+        return <div key={i} className={`dt-hm-cell dt-hm-cell--${lvl}`} title={`${d.date}: ${d.count} commits`} />
       })}
     </div>
   )
 }
 
-function InsightPanel({ title, content }) {
+function AIPanel({ title, content, onGenerate, busy }) {
   return (
-    <article className="panel">
-      <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">{title}</p>
-      <div className="prose-invert mt-5 max-w-none text-slate-200">
-        {content ? <p className="whitespace-pre-line leading-7">{content}</p> : <p className="text-slate-400">Generate AI insights to populate this section.</p>}
+    <div className="dt-ai-panel">
+      <div className="dt-ai-panel__header">
+        <span className="dt-ai-panel__spark">✦</span>
+        <span className="dt-ai-panel__title">{title}</span>
       </div>
-    </article>
-  )
-}
-
-function ListPanel({ title, items, renderItem, emptyText = 'No structured data available yet.' }) {
-  return (
-    <article className="panel">
-      <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">{title}</p>
-      <div className="mt-5 space-y-4">
-        {items.length ? (
-          items.map((item, index) => (
-            <div key={`${title}-${index}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-              {renderItem(item)}
-            </div>
-          ))
-        ) : (
-          <p className="text-sm text-slate-400">{emptyText}</p>
-        )}
-      </div>
-    </article>
-  )
-}
-
-function EmptyState({ title, description }) {
-  return (
-    <div className="mt-6 rounded-[30px] border border-dashed border-white/15 bg-white/5 p-8 text-center">
-      <h3 className="text-2xl font-bold text-white">{title}</h3>
-      <p className="mx-auto mt-3 max-w-xl text-slate-400">{description}</p>
+      {content ? (
+        <p className="dt-ai-panel__body">{content}</p>
+      ) : (
+        <div className="dt-ai-panel__empty">
+          <p className="dt-muted">No insights generated yet.</p>
+          <button className="dt-btn-primary dt-btn-sm--primary" onClick={onGenerate} disabled={busy}>
+            {busy ? <><span className="dt-spinner" /> Generating…</> : '✦ Generate Insights'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-function formatRelativeDate(value) {
-  if (!value) {
-    return 'not yet'
-  }
-
-  const date = new Date(value)
-  const diffDays = Math.round((Date.now() - date.getTime()) / 86400000)
-
-  if (diffDays <= 0) {
-    return 'today'
-  }
-
-  if (diffDays === 1) {
-    return '1 day ago'
-  }
-
-  if (diffDays < 30) {
-    return `${diffDays} days ago`
-  }
-
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date)
+function InsightList({ title, icon, items, render, emptyTxt = 'No data available yet.' }) {
+  return (
+    <div className="dt-glass">
+      <div className="dt-il-header">
+        <span className="dt-il-icon">{icon}</span>
+        <h3 className="dt-glass__title" style={{ margin: 0 }}>{title}</h3>
+      </div>
+      {items.length === 0
+        ? <p className="dt-muted">{emptyTxt}</p>
+        : items.map((item, i) => <div key={i} className="dt-il-item">{render(item)}</div>)
+      }
+    </div>
+  )
 }
 
-export default App
+/* ══════════════════════════════════════
+   PROFILE TAB
+══════════════════════════════════════ */
+function ProfileTab({ user, form, setForm, handleSave, busy, msg }) {
+  return (
+    <div className="dt-tab-body">
+      <div className="dt-tab-hd">
+        <div>
+          <span className="dt-eyebrow">SETTINGS</span>
+          <h2 className="dt-tab-title">Pilot Profile</h2>
+        </div>
+      </div>
+      <div className="dt-two-col">
+        <div className="dt-glass">
+          <h3 className="dt-glass__title">Edit Profile</h3>
+          <form className="dt-profile-form" onSubmit={handleSave}>
+            <div className="dt-field">
+              <label className="dt-label">Display Name</label>
+              <input className="dt-input" value={form.name} onChange={e => setForm({ name: e.target.value })} required />
+            </div>
+            <div className="dt-field">
+              <label className="dt-label">Email (read-only)</label>
+              <input className="dt-input" value={user?.email || ''} disabled style={{ opacity: 0.4 }} />
+            </div>
+            <button className="dt-btn-primary" type="submit" disabled={busy}>{busy ? <><span className="dt-spinner" /> Saving…</> : 'Save Changes'}</button>
+            {msg && <div className="dt-flash dt-flash--ok">{msg}</div>}
+          </form>
+        </div>
+
+        <div className="dt-glass">
+          <h3 className="dt-glass__title">Account Info</h3>
+          <div className="dt-profile-card">
+            <div className="dt-profile-avatar">{(user?.name || 'U')[0].toUpperCase()}</div>
+            <div>
+              <p className="dt-profile-name">{user?.name}</p>
+              <p className="dt-profile-email">{user?.email}</p>
+            </div>
+          </div>
+          <div className="dt-info-rows">
+            {[
+              { label: 'Plan', val: user?.plan || 'Free' },
+              { label: 'GitHub', val: user?.githubUsername ? `@${user.githubUsername}` : 'Not linked' },
+              { label: 'Last active', val: relDate(user?.lastActive) },
+              { label: 'User ID', val: user?._id ? `#${String(user._id).slice(-6).toUpperCase()}` : '—' },
+            ].map(r => (
+              <div key={r.label} className="dt-info-row">
+                <span className="dt-info-row__label">{r.label}</span>
+                <span className="dt-info-row__val">{r.val}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════
+   UTILITY COMPONENTS
+══════════════════════════════════════ */
+function DtLoader() {
+  return (
+    <div className="dt-loader">
+      <div className="dt-loader__ring" />
+      <p className="dt-loader__txt">Syncing mission data…</p>
+    </div>
+  )
+}
+
+function DtEmpty({ icon, title, sub }) {
+  return (
+    <div className="dt-empty">
+      <div className="dt-empty__icon">{icon}</div>
+      <h3 className="dt-empty__title">{title}</h3>
+      <p className="dt-empty__sub">{sub}</p>
+    </div>
+  )
+}
+
+function DtError({ msg }) {
+  return (
+    <div className="dt-error-banner">
+      <span className="dt-error-banner__icon">⚠</span>
+      <div>
+        <p className="dt-error-banner__msg">{msg}</p>
+        <p className="dt-error-banner__hint">If newly tracked, try syncing the repo first.</p>
+      </div>
+    </div>
+  )
+}
+
+function relDate(v) {
+  if (!v) return 'never'
+  const d = Math.round((Date.now() - new Date(v).getTime()) / 86400000)
+  if (d <= 0) return 'today'
+  if (d === 1) return '1d ago'
+  if (d < 30) return `${d}d ago`
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(v))
+}

@@ -67,6 +67,31 @@ const generateInsights = catchAsync(async (req, res) => {
     aiService.analyzeInactiveContributors(inactiveContributors),
   ]);
 
+  const aiResults = [
+    sprintSummary,
+    productivityInsights,
+    recommendations,
+    bottlenecks,
+    projectHealthAnalysis,
+    riskAnalysis,
+    inactiveAnalysis,
+  ];
+  const failedResults = aiResults.filter((result) => result.status === 'rejected');
+  const quotaFailure = failedResults.find((result) => result.reason?.code === 'AI_QUOTA_EXCEEDED');
+
+  if (failedResults.length === aiResults.length) {
+    const statusCode = quotaFailure?.reason?.statusCode || 503;
+
+    if (quotaFailure?.reason?.retryAfterSeconds) {
+      res.set('Retry-After', String(quotaFailure.reason.retryAfterSeconds));
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      message: quotaFailure?.reason?.message || 'AI insight generation failed for every task. Please try again later.',
+    });
+  }
+
   // Build insights object with fallbacks
   const insightsData = {
     repository: repo._id,
@@ -86,10 +111,20 @@ const generateInsights = catchAsync(async (req, res) => {
   const insights = await AIInsights.findOneAndUpdate(
     { repository: repo._id, owner: req.user._id },
     insightsData,
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
-  res.json({ success: true, cached: false, insights });
+  if (quotaFailure?.reason?.retryAfterSeconds) {
+    res.set('Retry-After', String(quotaFailure.reason.retryAfterSeconds));
+  }
+
+  res.json({
+    success: true,
+    cached: false,
+    partial: failedResults.length > 0,
+    warnings: failedResults.map((result) => result.reason?.message).filter(Boolean),
+    insights,
+  });
 });
 
 /**

@@ -14,6 +14,44 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const MODEL = 'gemini-2.0-flash';
 
+class AIServiceError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = 'AIServiceError';
+    this.statusCode = options.statusCode || 500;
+    this.code = options.code || 'AI_SERVICE_ERROR';
+    this.retryAfterSeconds = options.retryAfterSeconds || null;
+  }
+}
+
+const extractRetryAfterSeconds = (message) => {
+  const match = String(message || '').match(/retry in\s+(\d+(?:\.\d+)?)s/i);
+  return match ? Math.ceil(Number(match[1])) : null;
+};
+
+const normalizeAIError = (error) => {
+  const message = String(error?.message || error || 'Unknown AI error');
+  const upper = message.toUpperCase();
+  const retryAfterSeconds = extractRetryAfterSeconds(message);
+
+  if (upper.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || /quota exceeded/i.test(message)) {
+    return new AIServiceError(
+      'Gemini API quota exceeded. Please try again later or update your API plan/billing.',
+      {
+        statusCode: 429,
+        code: 'AI_QUOTA_EXCEEDED',
+        retryAfterSeconds,
+      }
+    );
+  }
+
+  return new AIServiceError(`AI generation failed: ${message}`, {
+    statusCode: 502,
+    code: 'AI_GENERATION_FAILED',
+    retryAfterSeconds,
+  });
+};
+
 /**
  * Core Gemini text generation function
  * @param {string} prompt
@@ -28,7 +66,7 @@ const generateText = async (prompt) => {
     return response.text;
   } catch (error) {
     console.error('Gemini API Error:', error.message);
-    throw new Error(`AI generation failed: ${error.message}`);
+    throw normalizeAIError(error);
   }
 };
 
@@ -147,6 +185,7 @@ const analyzeInactiveContributors = async (contributors) => {
 };
 
 module.exports = {
+  AIServiceError,
   generateSprintSummary,
   generateProductivityInsights,
   generateRecommendations,

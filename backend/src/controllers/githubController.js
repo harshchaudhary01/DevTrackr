@@ -99,7 +99,7 @@ const trackRepository = catchAsync(async (req, res) => {
   const repo = await Repository.findOneAndUpdate(
     { owner: req.user._id, githubId },
     { owner: req.user._id, githubId, name, fullName, description, url, language, stars, forks, openIssues, isPrivate, defaultBranch, isActive: true },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   // Add to user's connectedRepos if not already there
@@ -118,7 +118,7 @@ const untrackRepository = catchAsync(async (req, res) => {
   const repo = await Repository.findOneAndUpdate(
     { _id: req.params.repoId, owner: req.user._id },
     { isActive: false },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!repo) {
@@ -207,7 +207,7 @@ const syncRepository = catchAsync(async (req, res) => {
       },
       lastCalculated: new Date(),
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   // Update repo last synced
