@@ -1136,6 +1136,50 @@ body {
 .dt-score-card--amber  .dt-score-card__val { color: var(--amber); }
 .dt-score-card--amber  .dt-score-card__fill { background: var(--amber); }
 
+.dt-line-chart {
+  margin-top: 1rem;
+}
+
+.dt-line-chart__svg {
+  width: 100%;
+  height: 180px;
+  display: block;
+}
+
+.dt-line-chart__grid {
+  stroke: rgba(255,255,255,0.08);
+  stroke-width: 1;
+}
+
+.dt-line-chart__area {
+  fill: rgba(34,211,238,0.12);
+}
+
+.dt-line-chart__line {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 8px 14px rgba(34,211,238,0.22));
+}
+
+.dt-line-chart__dot {
+  fill: var(--violet);
+  stroke: rgba(9,12,24,0.95);
+  stroke-width: 2;
+}
+
+.dt-line-chart__labels {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-4);
+}
+
 /* ══════════════════════════════════════
    BAR CHART
 ══════════════════════════════════════ */
@@ -1361,6 +1405,215 @@ body {
 .dt-il-title { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
 .dt-il-desc { font-size: 0.82rem; color: var(--text-3); line-height: 1.55; }
 .dt-il-hint { font-size: 0.8rem; color: rgba(139,92,246,0.8); margin-top: 6px; }
+
+.dt-chart-note {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dt-month-chart {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  min-height: 240px;
+  margin-top: 1rem;
+}
+
+.dt-month-chart__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dt-month-chart__value {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-3);
+}
+
+.dt-month-chart__track {
+  width: 100%;
+  height: 180px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
+    rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  align-items: flex-end;
+  padding: 4px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dt-month-chart__fill {
+  width: 100%;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(34,211,238,0.95), rgba(139,92,246,0.92) 58%, rgba(236,72,153,0.95));
+  box-shadow: 0 18px 30px rgba(139,92,246,0.28);
+  transition: height 0.8s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+.dt-month-chart__label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-4);
+}
+
+.dt-donut-wrap {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.dt-donut-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(255,255,255,0.06);
+  background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+}
+
+.dt-donut-chart {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 24px 45px rgba(5, 8, 20, 0.32);
+  flex-shrink: 0;
+}
+
+.dt-donut-chart__hole {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  background: rgba(8, 12, 24, 0.96);
+  border: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dt-donut-chart__total {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: var(--text-1);
+  line-height: 1;
+}
+
+.dt-donut-chart__caption {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-4);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-top: 0.3rem;
+}
+
+.dt-donut-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.dt-donut-card__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-4);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dt-donut-card__highlight {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: var(--text-1);
+}
+
+.dt-donut-card__sub {
+  font-size: 0.88rem;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.dt-donut-legend {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.dt-donut-legend__item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--r-md);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.dt-donut-legend__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dt-donut-legend__label {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.dt-donut-legend__stats {
+  font-size: 0.75rem;
+  color: var(--text-4);
+}
+
+@media (max-width: 720px) {
+  .dt-month-chart {
+    gap: 6px;
+    min-height: 210px;
+  }
+
+  .dt-month-chart__track {
+    height: 150px;
+    border-radius: 14px;
+  }
+
+  .dt-month-chart__label,
+  .dt-month-chart__value {
+    font-size: 0.58rem;
+  }
+
+  .dt-donut-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dt-donut-chart {
+    width: 150px;
+    height: 150px;
+  }
+
+  .dt-donut-chart__hole {
+    width: 92px;
+    height: 92px;
+  }
+}
 
 /* ══════════════════════════════════════
    PROFILE TAB

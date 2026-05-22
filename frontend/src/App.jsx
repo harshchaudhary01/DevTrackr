@@ -634,6 +634,10 @@ function GithubTab({ user, githubToken, setGithubToken, handleConnect, githubBus
 ══════════════════════════════════════ */
 function DetailTab({ meta, bundle, handleInsights, insightBusy, handleSync, syncingId }) {
   const repo = bundle.dashboard?.repository || meta
+  const commitVisuals = buildCommitVisuals(
+    bundle.dashboard?.heatmapData || [],
+    bundle.dashboard?.commitTrend || bundle.commits?.commitTrend || [],
+  )
   return (
     <div className="dt-tab-body">
       <div className="dt-tab-hd dt-tab-hd--wrap">
@@ -675,12 +679,18 @@ function DetailTab({ meta, bundle, handleInsights, insightBusy, handleSync, sync
           {/* Charts row */}
           <div className="dt-two-col">
             <div className="dt-glass">
-              <h3 className="dt-glass__title">Commit Trend</h3>
-              <BarChart data={bundle.dashboard.commitTrend || []} />
-              <h3 className="dt-glass__title" style={{ marginTop: '1.5rem' }}>Contribution Heatmap</h3>
-              <Heatmap data={bundle.dashboard.heatmapData || []} />
+              <div className="dt-section-hd">
+                <span className="dt-section-title">Commit Velocity</span>
+                <span className="dt-chart-note">Last 14 days</span>
+              </div>
+              <LineChart data={commitVisuals.dailyTrend} />
             </div>
             <div className="dt-glass">
+              <div className="dt-section-hd">
+                <span className="dt-section-title">Monthly Commit Volume</span>
+                <span className="dt-chart-note">Last 12 months</span>
+              </div>
+              <MonthCommitChart data={commitVisuals.monthlyBreakdown} />
               <h3 className="dt-glass__title">Top Contributors</h3>
               {(bundle.dashboard.topContributors || []).length === 0
                 ? <p className="dt-muted">No contributor data yet. Sync the repository first.</p>
@@ -697,6 +707,23 @@ function DetailTab({ meta, bundle, handleInsights, insightBusy, handleSync, sync
                   </div>
                 ))
               }
+            </div>
+          </div>
+
+          <div className="dt-two-col">
+            <div className="dt-glass">
+              <div className="dt-section-hd">
+                <span className="dt-section-title">Monthly Commit Volume</span>
+                <span className="dt-chart-note">Last 12 months</span>
+              </div>
+              <MonthCommitChart data={commitVisuals.monthlyBreakdown} />
+            </div>
+            <div className="dt-glass">
+              <div className="dt-section-hd">
+                <span className="dt-section-title">Commit Rhythm</span>
+                <span className="dt-chart-note">Weekday split</span>
+              </div>
+              <CommitDonutChart data={commitVisuals.weekdayBreakdown} />
             </div>
           </div>
 
@@ -815,6 +842,40 @@ function BarChart({ data }) {
   )
 }
 
+function LineChart({ data }) {
+  const safe = data.slice(-14)
+  if (!safe.length) return <p className="dt-muted">No recent commit activity available yet.</p>
+
+  const max = Math.max(...safe.map(item => item.count || 0), 1)
+  const points = safe.map((item, index) => {
+    const x = safe.length === 1 ? 180 : (index / (safe.length - 1)) * 360
+    const y = 140 - ((item.count || 0) / max) * 120
+    return { ...item, x, y }
+  })
+  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
+  const area = `${path} L 360 140 L 0 140 Z`
+
+  return (
+    <div className="dt-line-chart">
+      <svg viewBox="0 0 360 160" className="dt-line-chart__svg" preserveAspectRatio="none">
+        {[0, 1, 2, 3].map(step => (
+          <line key={step} x1="0" y1={20 + step * 40} x2="360" y2={20 + step * 40} className="dt-line-chart__grid" />
+        ))}
+        <path d={area} className="dt-line-chart__area" />
+        <path d={path} className="dt-line-chart__line" />
+        {points.map(point => (
+          <circle key={`${point.fullLabel}-${point.count}`} cx={point.x} cy={point.y} r="4" className="dt-line-chart__dot">
+            <title>{`${point.fullLabel}: ${point.count} commits`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="dt-line-chart__labels">
+        {safe.map(point => <span key={point.fullLabel}>{point.label}</span>)}
+      </div>
+    </div>
+  )
+}
+
 function Heatmap({ data }) {
   if (!data.length) return <p className="dt-muted">No heatmap data yet.</p>
   return (
@@ -825,6 +886,143 @@ function Heatmap({ data }) {
       })}
     </div>
   )
+}
+
+function MonthCommitChart({ data }) {
+  const safe = data.slice(-12)
+  const max = Math.max(...safe.map(d => d.count || 0), 1)
+  if (!safe.length) return <p className="dt-muted">No monthly commit data available yet.</p>
+  return (
+    <div className="dt-month-chart">
+      {safe.map((month) => {
+        const h = Math.max(month.count > 0 ? 12 : 6, ((month.count || 0) / max) * 100)
+        return (
+          <div key={`${month.year}-${month.label}`} className="dt-month-chart__col">
+            <span className="dt-month-chart__value">{month.count}</span>
+            <div className="dt-month-chart__track">
+              <div
+                className="dt-month-chart__fill"
+                style={{ height: `${h}%` }}
+                title={`${month.label} ${month.year}: ${month.count} commits`}
+              />
+            </div>
+            <span className="dt-month-chart__label">{month.label}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function CommitDonutChart({ data }) {
+  const safe = data.filter(item => item.count > 0)
+  const total = safe.reduce((sum, item) => sum + item.count, 0)
+
+  if (!total) {
+    return <p className="dt-muted">No weekday distribution available yet.</p>
+  }
+
+  const colors = ['#8b5cf6', '#22d3ee', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#f97316']
+  let cursor = 0
+  const segments = safe.map((item, index) => {
+    const start = cursor
+    const share = item.count / total
+    cursor += share
+    return {
+      ...item,
+      color: colors[index % colors.length],
+      start,
+      end: cursor,
+      percent: Math.round(share * 100),
+    }
+  })
+
+  const gradient = segments
+    .map(segment => `${segment.color} ${(segment.start * 100).toFixed(2)}% ${(segment.end * 100).toFixed(2)}%`)
+    .join(', ')
+
+  const busiest = [...segments].sort((a, b) => b.count - a.count)[0]
+
+  return (
+    <div className="dt-donut-wrap">
+      <div className="dt-donut-card">
+        <div className="dt-donut-chart" style={{ background: `conic-gradient(${gradient})` }}>
+          <div className="dt-donut-chart__hole">
+            <span className="dt-donut-chart__total">{total}</span>
+            <span className="dt-donut-chart__caption">commits</span>
+          </div>
+        </div>
+        <div className="dt-donut-card__meta">
+          <span className="dt-donut-card__eyebrow">Peak Day</span>
+          <span className="dt-donut-card__highlight">{busiest.label}</span>
+          <span className="dt-donut-card__sub">{busiest.count} commits pushed</span>
+        </div>
+      </div>
+
+      <div className="dt-donut-legend">
+        {segments.map(segment => (
+          <div key={segment.label} className="dt-donut-legend__item">
+            <span className="dt-donut-legend__dot" style={{ background: segment.color }} />
+            <span className="dt-donut-legend__label">{segment.label}</span>
+            <span className="dt-donut-legend__stats">{segment.count} · {segment.percent}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function buildCommitVisuals(heatmapData, trendData) {
+  const heatmap = Array.isArray(heatmapData) ? heatmapData : []
+  const trend = Array.isArray(trendData) ? trendData : []
+  const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const now = new Date()
+
+  const monthlyBreakdown = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1)
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      label: monthLabels[date.getMonth()],
+      year: date.getFullYear(),
+      count: 0,
+    }
+  })
+  const monthIndexMap = new Map(monthlyBreakdown.map((month, index) => [month.key, index]))
+  const weekdayBreakdown = weekdayLabels.map(label => ({ label, count: 0 }))
+
+  heatmap.forEach((entry) => {
+    if (!entry?.date) return
+    const date = new Date(entry.date)
+    if (Number.isNaN(date.getTime())) return
+    const count = Number(entry.count) || 0
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    const monthIndex = monthIndexMap.get(monthKey)
+    if (monthIndex !== undefined) monthlyBreakdown[monthIndex].count += count
+    weekdayBreakdown[date.getDay()].count += count
+  })
+
+  let dailyTrend = heatmap.slice(-14).map((entry) => {
+    const date = new Date(entry.date)
+    const formatted = Number.isNaN(date.getTime())
+      ? String(entry.date).slice(5)
+      : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date)
+    return {
+      label: formatted,
+      fullLabel: formatted,
+      count: Number(entry.count) || 0,
+    }
+  })
+
+  if (!dailyTrend.length && trend.length) {
+    dailyTrend = trend.slice(-14).map((entry) => ({
+      label: String(entry.date || '').slice(5),
+      fullLabel: String(entry.date || ''),
+      count: Number(entry.count) || 0,
+    }))
+  }
+
+  return { monthlyBreakdown, weekdayBreakdown, dailyTrend }
 }
 
 function AIPanel({ title, content, onGenerate, busy }) {
