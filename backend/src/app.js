@@ -25,12 +25,20 @@ const configuredOrigins = (process.env.FRONTEND_URL || '')
 
 const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
+console.log('CORS config:', {
+  nodeEnv: process.env.NODE_ENV,
+  frontendUrlEnv: process.env.FRONTEND_URL || '(not set)',
+  allowedOrigins,
+});
+
 // ─── Security Middleware ───────────────────────────────────────────────────────
 app.use(helmet());
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 const corsOptions = {
   origin: (origin, callback) => {
+    console.log('CORS request origin:', origin || '(no origin)');
+
     if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
